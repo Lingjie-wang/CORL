@@ -19,6 +19,10 @@ from torch.nn import functional as F
 from torch.utils.data import DataLoader, IterableDataset
 from tqdm.auto import tqdm, trange  # noqa
 
+
+REWARD_MODES = ("dense", "delayed", "sparse")
+
+
 @dataclass
 class TrainConfig:
     # wandb params
@@ -44,6 +48,7 @@ class TrainConfig:
     batch_size: int = 64
     update_steps: int = 100_000
     warmup_steps: int = 10_000
+    reward_mode: str = "dense"
     reward_scale: float = 0.001
     num_workers: int = 4
     # evaluation params
@@ -58,6 +63,13 @@ class TrainConfig:
     device: str = "cuda"
 
     def __post_init__(self):
+        if self.reward_mode == "sparse":
+            self.reward_mode = "delayed"
+        if self.reward_mode not in REWARD_MODES:
+            raise ValueError(
+                f"Unknown reward_mode: {self.reward_mode}. "
+                f"Expected one of {REWARD_MODES}."
+            )
         self.name = f"{self.name}-{self.env_name}-{str(uuid.uuid4())[:8]}"
         if self.checkpoints_path is not None:
             self.checkpoints_path = os.path.join(self.checkpoints_path, self.name)
@@ -128,8 +140,13 @@ def discounted_cumsum(x: np.ndarray, gamma: float) -> np.ndarray:
 
 
 def load_d4rl_trajectories(
-    env_name: str, gamma: float = 1.0
+    env_name: str, gamma: float = 1.0, reward_mode: str = "dense"
 ) -> Tuple[List[DefaultDict[str, np.ndarray]], Dict[str, Any]]:
+    if reward_mode == "sparse":
+        reward_mode = "delayed"
+    if reward_mode not in REWARD_MODES:
+        raise ValueError(f"Unknown reward_mode: {reward_mode}")
+
     dataset = gym.make(env_name).get_dataset()
     traj, traj_len = [], []
 
@@ -141,6 +158,10 @@ def load_d4rl_trajectories(
 
         if dataset["terminals"][i] or dataset["timeouts"][i]:
             episode_data = {k: np.array(v, dtype=np.float32) for k, v in data_.items()}
+            if reward_mode == "delayed":
+                delayed_rewards = np.zeros_like(episode_data["rewards"])
+                delayed_rewards[-1] = episode_data["rewards"].sum()
+                episode_data["rewards"] = delayed_rewards
             # return-to-go if gamma=1.0, just discounted returns else
             episode_data["returns"] = discounted_cumsum(
                 episode_data["rewards"], gamma=gamma
@@ -160,8 +181,16 @@ def load_d4rl_trajectories(
 
 
 class SequenceDataset(IterableDataset):
-    def __init__(self, env_name: str, seq_len: int = 10, reward_scale: float = 1.0):
-        self.dataset, info = load_d4rl_trajectories(env_name, gamma=1.0)
+    def __init__(
+        self,
+        env_name: str,
+        seq_len: int = 10,
+        reward_scale: float = 1.0,
+        reward_mode: str = "dense",
+    ):
+        self.dataset, info = load_d4rl_trajectories(
+            env_name, gamma=1.0, reward_mode=reward_mode
+        )
         self.reward_scale = reward_scale
         self.seq_len = seq_len
 
@@ -358,8 +387,14 @@ def eval_rollout(
     model: DecisionTransformer,
     env: gym.Env,
     target_return: float,
+    reward_mode: str = "dense",
     device: str = "cpu",
 ) -> Tuple[float, float]:
+    if reward_mode == "sparse":
+        reward_mode = "delayed"
+    if reward_mode not in REWARD_MODES:
+        raise ValueError(f"Unknown reward_mode: {reward_mode}")
+
     states = torch.zeros(
         1, model.episode_len + 1, model.state_dim, dtype=torch.float, device=device
     )
@@ -390,7 +425,10 @@ def eval_rollout(
         # at step t, we predict a_t, get s_{t + 1}, r_{t + 1}
         actions[:, step] = torch.as_tensor(predicted_action)
         states[:, step + 1] = torch.as_tensor(next_state)
-        returns[:, step + 1] = torch.as_tensor(returns[:, step] - reward)
+        if reward_mode == "delayed":
+            returns[:, step + 1] = returns[:, step]
+        else:
+            returns[:, step + 1] = torch.as_tensor(returns[:, step] - reward)
 
         episode_return += reward
         episode_len += 1
@@ -409,7 +447,10 @@ def train(config: TrainConfig):
 
     # data & dataloader setup
     dataset = SequenceDataset(
-        config.env_name, seq_len=config.seq_len, reward_scale=config.reward_scale
+        config.env_name,
+        seq_len=config.seq_len,
+        reward_scale=config.reward_scale,
+        reward_mode=config.reward_mode,
     )
     trainloader = DataLoader(
         dataset,
@@ -503,6 +544,7 @@ def train(config: TrainConfig):
                         model=model,
                         env=eval_env,
                         target_return=target_return * config.reward_scale,
+                        reward_mode=config.reward_mode,
                         device=config.device,
                     )
                     # unscale for logging & correct normalized score computation
