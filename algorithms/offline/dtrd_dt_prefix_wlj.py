@@ -36,6 +36,9 @@ from algorithms.offline.dt import (
 )
 
 
+REWARD_MODES = ("dense", "delayed", "sparse")
+
+
 @dataclass
 class TrainConfig:
     project: str = "CORL"
@@ -60,6 +63,7 @@ class TrainConfig:
     batch_size: int = 64
     update_steps: int = 100_000
     warmup_steps: int = 10_000
+    reward_mode: str = "dense"
     reward_scale: float = 0.001
     num_workers: int = 4
 
@@ -85,6 +89,13 @@ class TrainConfig:
     def __post_init__(self):
         if not 0.0 < self.val_ratio < 1.0:
             raise ValueError("val_ratio must be in (0, 1)")
+        if self.reward_mode == "sparse":
+            self.reward_mode = "delayed"
+        if self.reward_mode not in REWARD_MODES:
+            raise ValueError(
+                f"Unknown reward_mode: {self.reward_mode}. "
+                f"Expected one of {REWARD_MODES}."
+            )
         if self.reward_model_type not in ("markov", "gru"):
             raise ValueError("reward_model_type must be either 'markov' or 'gru'")
         self.name = f"{self.name}-{self.env_name}-{str(uuid.uuid4())[:8]}"
@@ -107,8 +118,13 @@ def wandb_init(config: dict) -> None:
 
 
 def load_d4rl_trajectories(
-    env_name: str, gamma: float = 1.0
+    env_name: str, gamma: float = 1.0, reward_mode: str = "dense"
 ) -> Tuple[List[DefaultDict[str, np.ndarray]], Dict[str, Any]]:
+    if reward_mode == "sparse":
+        reward_mode = "delayed"
+    if reward_mode not in REWARD_MODES:
+        raise ValueError(f"Unknown reward_mode: {reward_mode}")
+
     dataset = gym.make(env_name).get_dataset()
     trajectories, traj_lens, traj_returns = [], [], []
 
@@ -120,6 +136,10 @@ def load_d4rl_trajectories(
 
         if dataset["terminals"][i] or dataset["timeouts"][i]:
             episode_data = {k: np.array(v, dtype=np.float32) for k, v in data_.items()}
+            if reward_mode == "delayed":
+                delayed_rewards = np.zeros_like(episode_data["rewards"])
+                delayed_rewards[-1] = episode_data["rewards"].sum()
+                episode_data["rewards"] = delayed_rewards
             episode_data["dense_returns"] = discounted_cumsum(
                 episode_data["rewards"], gamma=gamma
             )
@@ -617,7 +637,9 @@ def train(config: TrainConfig):
     set_seed(config.train_seed, deterministic_torch=config.deterministic_torch)
     wandb_init(asdict(config))
 
-    trajectories, info = load_d4rl_trajectories(config.env_name, gamma=1.0)
+    trajectories, info = load_d4rl_trajectories(
+        config.env_name, gamma=1.0, reward_mode=config.reward_mode
+    )
     train_traj, val_traj = split_trajectories(
         trajectories, info["traj_lens"], config.val_ratio, config.train_seed
     )

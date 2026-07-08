@@ -145,4 +145,5 @@ dmypy.json
 .json
 .yaml
 wandb
+outputs/
 assets/outputs/
