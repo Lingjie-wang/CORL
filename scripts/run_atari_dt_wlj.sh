@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT"
+
+CONDA_ENV="${CONDA_ENV:-corlenv}"
+if [ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ]; then
+  source "$HOME/miniconda3/etc/profile.d/conda.sh"
+  conda activate "$CONDA_ENV"
+elif [ -f /root/miniconda3/etc/profile.d/conda.sh ]; then
+  source /root/miniconda3/etc/profile.d/conda.sh
+  conda activate "$CONDA_ENV"
+fi
+
+export WANDB_MODE="${WANDB_MODE:-online}"
+export WANDB_DIR="${WANDB_DIR:-$REPO_ROOT/outputs/wandb}"
+export WANDB_CACHE_DIR="${WANDB_CACHE_DIR:-$REPO_ROOT/outputs/wandb_cache}"
+export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-max_split_size_mb:128}"
+mkdir -p "$WANDB_DIR" "$WANDB_CACHE_DIR"
+
+GAMES="${GAMES:-Breakout Seaquest Qbert Pong}"
+SEEDS="${SEEDS:-123 231 312}"
+EPOCHS="${EPOCHS:-5}"
+NUM_STEPS="${NUM_STEPS:-500000}"
+NUM_BUFFERS="${NUM_BUFFERS:-50}"
+TRAJECTORIES_PER_BUFFER="${TRAJECTORIES_PER_BUFFER:-10}"
+DEVICE="${DEVICE:-cuda}"
+NUM_WORKERS="${NUM_WORKERS:-4}"
+EVAL_EPISODES="${EVAL_EPISODES:-10}"
+CHECKPOINTS_PATH="${CHECKPOINTS_PATH:-}"
+ATARI_DATA_DIR="${ATARI_DATA_DIR:-$REPO_ROOT/outputs/atari/dqn_replay}"
+DOWNLOAD_DATA="${DOWNLOAD_DATA:-1}"
+
+if [ "$DOWNLOAD_DATA" = "1" ]; then
+  GAMES="$GAMES" ATARI_DATA_DIR="$ATARI_DATA_DIR" scripts/download_atari_dqn_replay_wlj.sh
+fi
+
+context_length_for_game() {
+  if [ -n "${CONTEXT_LENGTH:-}" ]; then
+    echo "$CONTEXT_LENGTH"
+  elif [ "$1" = "Pong" ]; then
+    echo 50
+  else
+    echo 30
+  fi
+}
+
+batch_size_for_game() {
+  if [ -n "${BATCH_SIZE:-}" ]; then
+    echo "$BATCH_SIZE"
+  elif [ "$1" = "Pong" ]; then
+    echo 512
+  else
+    echo 128
+  fi
+}
+
+for game in $GAMES; do
+  if [ ! -d "$ATARI_DATA_DIR/$game/1/replay_logs" ]; then
+    echo "Missing Atari dataset for $game: $ATARI_DATA_DIR/$game/1/replay_logs" >&2
+    echo "Run scripts/download_atari_dqn_replay_wlj.sh or set ATARI_DATA_DIR." >&2
+    exit 1
+  fi
+
+  context_length="$(context_length_for_game "$game")"
+  batch_size="$(batch_size_for_game "$game")"
+  for seed in $SEEDS; do
+    echo "Running Atari DT on ${game} seed=${seed}"
+    args=(
+      --seed "$seed"
+      --context_length "$context_length"
+      --epochs "$EPOCHS"
+      --model_type reward_conditioned
+      --num_steps "$NUM_STEPS"
+      --num_buffers "$NUM_BUFFERS"
+      --game "$game"
+      --batch_size "$batch_size"
+      --trajectories_per_buffer "$TRAJECTORIES_PER_BUFFER"
+      --data_dir_prefix "$ATARI_DATA_DIR"
+      --num_workers "$NUM_WORKERS"
+      --device "$DEVICE"
+      --eval_episodes "$EVAL_EPISODES"
+    )
+    if [ -n "$CHECKPOINTS_PATH" ]; then
+      args+=(--checkpoints_path "$CHECKPOINTS_PATH")
+    fi
+    python -m algorithms.offline.atari_dt_wlj "${args[@]}"
+  done
+done

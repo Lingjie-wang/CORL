@@ -1,0 +1,9 @@
+# Extra dependencies for scripts/run_atari_*_wlj.sh.
+# The Atari implementation follows the Decision Transformer Atari codebase and
+# Google DQN Replay reader, which rely on Dopamine's TensorFlow replay loader.
+opencv-python
+blosc
+gin-config
+tensorflow
+git+https://github.com/google/dopamine.git
+atari-py
