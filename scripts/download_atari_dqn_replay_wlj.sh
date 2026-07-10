@@ -34,13 +34,15 @@ EOF
 
 download_with_gsutil() {
   local game="$1"
-  gsutil -m cp -n -R "gs://atari-replay-datasets/dqn/$game" "$ATARI_DATA_DIR"
+  mkdir -p "$ATARI_DATA_DIR/$game"
+  gsutil -m cp -n -R "gs://atari-replay-datasets/dqn/$game/1" "$ATARI_DATA_DIR/$game"
 }
 
 download_with_gcloud() {
   local game="$1"
+  mkdir -p "$ATARI_DATA_DIR/$game"
   gcloud storage cp --recursive --no-clobber \
-    "gs://atari-replay-datasets/dqn/$game" "$ATARI_DATA_DIR"
+    "gs://atari-replay-datasets/dqn/$game/1" "$ATARI_DATA_DIR/$game"
 }
 
 for game in $GAMES; do

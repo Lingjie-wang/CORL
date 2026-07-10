@@ -9,6 +9,7 @@ from torch.utils.data import Dataset
 
 from algorithms.offline.atari_wlj.create_dataset import create_dataset
 from algorithms.offline.atari_wlj.model_atari import GPT, GPTConfig
+from algorithms.offline.atari_wlj.tfds_dataset import create_tfds_dataset
 from algorithms.offline.atari_wlj.trainer_atari import Trainer, TrainerConfig
 from algorithms.offline.atari_wlj.utils import set_seed
 
@@ -66,6 +67,10 @@ def parse_args():
     parser.add_argument("--batch_size", type=int, default=128)
     parser.add_argument("--trajectories_per_buffer", type=int, default=10)
     parser.add_argument("--data_dir_prefix", type=str, default="./outputs/atari/dqn_replay")
+    parser.add_argument("--data_source", choices=("dqn_replay", "tfds"), default="dqn_replay")
+    parser.add_argument("--tfds_data_dir", type=str, default="./outputs/atari/tfds")
+    parser.add_argument("--tfds_run", type=int, default=1)
+    parser.add_argument("--tfds_download", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--learning_rate", type=float, default=6e-4)
     parser.add_argument("--num_workers", type=int, default=4)
     parser.add_argument("--device", type=str, default="cuda")
@@ -87,14 +92,23 @@ def main():
         level=logging.INFO,
     )
 
-    data_dir_prefix = os.path.join(args.data_dir_prefix, "")
-    obss, actions, returns, done_idxs, rtgs, timesteps = create_dataset(
-        args.num_buffers,
-        args.num_steps,
-        args.game,
-        data_dir_prefix,
-        args.trajectories_per_buffer,
-    )
+    if args.data_source == "tfds":
+        obss, actions, returns, done_idxs, rtgs, timesteps = create_tfds_dataset(
+            args.num_steps,
+            args.game,
+            args.tfds_data_dir,
+            run=args.tfds_run,
+            download=args.tfds_download,
+        )
+    else:
+        data_dir_prefix = os.path.join(args.data_dir_prefix, "")
+        obss, actions, returns, done_idxs, rtgs, timesteps = create_dataset(
+            args.num_buffers,
+            args.num_steps,
+            args.game,
+            data_dir_prefix,
+            args.trajectories_per_buffer,
+        )
     train_dataset = StateActionReturnDataset(
         obss, args.context_length * 3, actions, done_idxs, rtgs, timesteps
     )

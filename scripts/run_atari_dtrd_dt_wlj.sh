@@ -30,6 +30,9 @@ NUM_WORKERS="${NUM_WORKERS:-4}"
 EVAL_EPISODES="${EVAL_EPISODES:-10}"
 CHECKPOINTS_PATH="${CHECKPOINTS_PATH:-}"
 ATARI_DATA_DIR="${ATARI_DATA_DIR:-$REPO_ROOT/outputs/atari/dqn_replay}"
+DATA_SOURCE="${DATA_SOURCE:-dqn_replay}"
+TFDS_DATA_DIR="${TFDS_DATA_DIR:-$REPO_ROOT/outputs/atari/tfds}"
+TFDS_RUN="${TFDS_RUN:-1}"
 DOWNLOAD_DATA="${DOWNLOAD_DATA:-1}"
 
 REWARD_EPOCHS="${REWARD_EPOCHS:-3}"
@@ -40,8 +43,10 @@ REWARD_HIDDEN_DIM="${REWARD_HIDDEN_DIM:-128}"
 TRAJECTORY_LAMB="${TRAJECTORY_LAMB:-0.01}"
 REDISTRIBUTION_BATCH_SIZE="${REDISTRIBUTION_BATCH_SIZE:-512}"
 
-if [ "$DOWNLOAD_DATA" = "1" ]; then
+if [ "$DOWNLOAD_DATA" = "1" ] && [ "$DATA_SOURCE" = "dqn_replay" ]; then
   GAMES="$GAMES" ATARI_DATA_DIR="$ATARI_DATA_DIR" scripts/download_atari_dqn_replay_wlj.sh
+elif [ "$DOWNLOAD_DATA" = "1" ] && [ "$DATA_SOURCE" = "tfds" ]; then
+  GAMES="$GAMES" TFDS_DATA_DIR="$TFDS_DATA_DIR" TFDS_RUN="$TFDS_RUN" scripts/download_atari_tfds_wlj.sh
 fi
 
 context_length_for_game() {
@@ -65,9 +70,12 @@ batch_size_for_game() {
 }
 
 for game in $GAMES; do
-  if [ ! -d "$ATARI_DATA_DIR/$game/1/replay_logs" ]; then
+  if [ "$DATA_SOURCE" = "dqn_replay" ] && [ ! -d "$ATARI_DATA_DIR/$game/1/replay_logs" ]; then
     echo "Missing Atari dataset for $game: $ATARI_DATA_DIR/$game/1/replay_logs" >&2
     echo "Run scripts/download_atari_dqn_replay_wlj.sh or set ATARI_DATA_DIR." >&2
+    exit 1
+  elif [ "$DATA_SOURCE" != "dqn_replay" ] && [ "$DATA_SOURCE" != "tfds" ]; then
+    echo "Unsupported DATA_SOURCE=$DATA_SOURCE. Use dqn_replay or tfds." >&2
     exit 1
   fi
 
@@ -85,6 +93,9 @@ for game in $GAMES; do
       --batch_size "$batch_size"
       --trajectories_per_buffer "$TRAJECTORIES_PER_BUFFER"
       --data_dir_prefix "$ATARI_DATA_DIR"
+      --data_source "$DATA_SOURCE"
+      --tfds_data_dir "$TFDS_DATA_DIR"
+      --tfds_run "$TFDS_RUN"
       --num_workers "$NUM_WORKERS"
       --device "$DEVICE"
       --eval_episodes "$EVAL_EPISODES"
@@ -98,6 +109,9 @@ for game in $GAMES; do
     )
     if [ -n "$CHECKPOINTS_PATH" ]; then
       args+=(--checkpoints_path "$CHECKPOINTS_PATH")
+    fi
+    if [ "$DATA_SOURCE" = "tfds" ] && [ "$DOWNLOAD_DATA" != "1" ]; then
+      args+=(--no-tfds_download)
     fi
     python -m algorithms.offline.atari_dtrd_dt_wlj "${args[@]}"
   done
