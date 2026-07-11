@@ -1,13 +1,14 @@
 import argparse
 import logging
 import os
+import uuid
 from pathlib import Path
 
 import numpy as np
 import torch
+import wandb
 from torch.utils.data import Dataset
 
-from algorithms.offline.atari_wlj.create_dataset import create_dataset
 from algorithms.offline.atari_wlj.model_atari import GPT, GPTConfig
 from algorithms.offline.atari_wlj.tfds_dataset import create_tfds_dataset
 from algorithms.offline.atari_wlj.trainer_atari import Trainer, TrainerConfig
@@ -55,8 +56,22 @@ class StateActionReturnDataset(Dataset):
         return states, actions, rtgs, timesteps
 
 
+def wandb_init(config: dict) -> None:
+    wandb.init(
+        config=config,
+        project=config["project"],
+        group=config["group"],
+        name=config["name"],
+        id=str(uuid.uuid4()),
+    )
+
+
 def parse_args():
     parser = argparse.ArgumentParser()
+    # wandb params
+    parser.add_argument("--project", type=str, default="CORL")
+    parser.add_argument("--group", type=str, default="DT-Atari")
+    parser.add_argument("--name", type=str, default="DT")
     parser.add_argument("--seed", type=int, default=123)
     parser.add_argument("--context_length", type=int, default=30)
     parser.add_argument("--epochs", type=int, default=5)
@@ -68,6 +83,7 @@ def parse_args():
     parser.add_argument("--trajectories_per_buffer", type=int, default=10)
     parser.add_argument("--data_dir_prefix", type=str, default="./outputs/atari/dqn_replay")
     parser.add_argument("--data_source", choices=("dqn_replay", "tfds"), default="dqn_replay")
+    parser.add_argument("--reward_mode", choices=("dense", "delayed", "sparse"), default="dense")
     parser.add_argument("--tfds_data_dir", type=str, default="./outputs/atari/tfds")
     parser.add_argument("--tfds_run", type=int, default=1)
     parser.add_argument("--tfds_download", action=argparse.BooleanOptionalAction, default=True)
@@ -92,6 +108,16 @@ def main():
         level=logging.INFO,
     )
 
+    # init wandb session for logging. group by game+reward_mode so that the
+    # dense/delayed x multi-seed runs are aggregated together, and give each
+    # run a unique, descriptive name.
+    wandb_config = vars(args).copy()
+    wandb_config["group"] = f"{args.group}-{args.game}-{args.reward_mode}"
+    wandb_config["name"] = (
+        f"{args.name}-{args.game}-{args.reward_mode}-{args.seed}-{str(uuid.uuid4())[:8]}"
+    )
+    wandb_init(wandb_config)
+
     if args.data_source == "tfds":
         obss, actions, returns, done_idxs, rtgs, timesteps = create_tfds_dataset(
             args.num_steps,
@@ -99,8 +125,11 @@ def main():
             args.tfds_data_dir,
             run=args.tfds_run,
             download=args.tfds_download,
+            reward_mode=args.reward_mode,
         )
     else:
+        from algorithms.offline.atari_wlj.create_dataset import create_dataset
+
         data_dir_prefix = os.path.join(args.data_dir_prefix, "")
         obss, actions, returns, done_idxs, rtgs, timesteps = create_dataset(
             args.num_buffers,
@@ -108,6 +137,7 @@ def main():
             args.game,
             data_dir_prefix,
             args.trajectories_per_buffer,
+            reward_mode=args.reward_mode,
         )
     train_dataset = StateActionReturnDataset(
         obss, args.context_length * 3, actions, done_idxs, rtgs, timesteps
@@ -152,6 +182,7 @@ def main():
     trainer.train()
     if ckpt_path is not None:
         trainer.save_checkpoint()
+    wandb.finish()
 
 
 if __name__ == "__main__":
