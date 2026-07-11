@@ -95,6 +95,12 @@ def parse_args():
     parser.add_argument("--n_embd", type=int, default=128)
     parser.add_argument("--eval_episodes", type=int, default=10)
     parser.add_argument("--eval_target_return", type=int, default=None)
+    parser.add_argument(
+        "--eval_every_steps",
+        type=int,
+        default=None,
+        help="If set, also evaluate every N training steps in addition to once per epoch",
+    )
     parser.add_argument("--checkpoints_path", type=str, default=None)
     return parser.parse_args()
 
@@ -176,6 +182,7 @@ def main():
         device=args.device,
         eval_episodes=args.eval_episodes,
         eval_target_return=args.eval_target_return or TARGET_RETURNS.get(args.game),
+        eval_every_steps=args.eval_every_steps,
         ckpt_path=ckpt_path,
     )
     trainer = Trainer(model, train_dataset, None, trainer_config)

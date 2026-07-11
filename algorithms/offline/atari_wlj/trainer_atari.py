@@ -48,6 +48,7 @@ class TrainerConfig:
     device = "cuda"
     eval_episodes = 10
     eval_target_return = None
+    eval_every_steps = None # if set, also evaluate every N training steps (in addition to once per epoch)
     num_workers = 0 # for DataLoader
 
     def __init__(self, **kwargs):
@@ -76,6 +77,40 @@ class Trainer:
         logger.info("saving %s", self.config.ckpt_path)
         if self.config.ckpt_path is not None:
             torch.save(raw_model.state_dict(), self.config.ckpt_path)
+
+    def evaluate(self, epoch, best_return):
+        if self.config.model_type == 'naive':
+            target_return = 0
+            eval_return = self.get_returns(0)
+        elif self.config.model_type == 'reward_conditioned':
+            if self.config.eval_target_return is not None:
+                target_return = self.config.eval_target_return
+            elif self.config.game == 'Breakout':
+                target_return = 90
+            elif self.config.game == 'Seaquest':
+                target_return = 1150
+            elif self.config.game == 'Qbert':
+                target_return = 14000
+            elif self.config.game == 'Pong':
+                target_return = 20
+            else:
+                raise NotImplementedError()
+            eval_return = self.get_returns(target_return)
+        else:
+            raise NotImplementedError()
+
+        best_return = max(best_return, eval_return)
+        wandb.log(
+            {
+                "eval/return": eval_return,
+                "eval/best_return": best_return,
+                "eval/target_return": target_return,
+                "epoch": epoch,
+            },
+            step=self.global_step,
+        )
+        self.global_step += 1
+        return best_return
 
     def train(self):
         model, config = self.model, self.config
@@ -143,6 +178,18 @@ class Trainer:
                         step=self.global_step,
                     )
                     self.global_step += 1
+                    self.steps_since_eval += 1
+
+                    # optionally evaluate more often than once per epoch, so
+                    # runs with few epochs still produce enough eval points
+                    if (
+                        self.config.eval_episodes > 0
+                        and self.config.eval_every_steps
+                        and self.steps_since_eval >= self.config.eval_every_steps
+                    ):
+                        self.steps_since_eval = 0
+                        self.best_return = self.evaluate(epoch, self.best_return)
+                        model.train(is_train)
 
             if not is_train:
                 test_loss = float(np.mean(losses))
@@ -151,10 +198,11 @@ class Trainer:
 
         # best_loss = float('inf')
 
-        best_return = -float('inf')
+        self.best_return = -float('inf')
 
         self.tokens = 0 # counter used for learning rate decay
         self.global_step = 0 # counter used as the wandb logging step
+        self.steps_since_eval = 0 # counter used to trigger mid-epoch evaluation
 
         for epoch in range(config.max_epochs):
 
@@ -170,36 +218,8 @@ class Trainer:
 
             # -- pass in target returns
             if self.config.eval_episodes > 0:
-                if self.config.model_type == 'naive':
-                    target_return = 0
-                    eval_return = self.get_returns(0)
-                elif self.config.model_type == 'reward_conditioned':
-                    if self.config.eval_target_return is not None:
-                        target_return = self.config.eval_target_return
-                    elif self.config.game == 'Breakout':
-                        target_return = 90
-                    elif self.config.game == 'Seaquest':
-                        target_return = 1150
-                    elif self.config.game == 'Qbert':
-                        target_return = 14000
-                    elif self.config.game == 'Pong':
-                        target_return = 20
-                    else:
-                        raise NotImplementedError()
-                    eval_return = self.get_returns(target_return)
-                else:
-                    raise NotImplementedError()
-
-                best_return = max(best_return, eval_return)
-                wandb.log(
-                    {
-                        "eval/return": eval_return,
-                        "eval/best_return": best_return,
-                        "eval/target_return": target_return,
-                        "epoch": epoch,
-                    },
-                    step=self.global_step,
-                )
+                self.best_return = self.evaluate(epoch, self.best_return)
+                self.steps_since_eval = 0
 
     def get_returns(self, ret):
         self.model.train(False)
@@ -215,8 +235,8 @@ class Trainer:
             rtgs = [ret]
             # first state is from env, first rtg is target return, and first timestep is 0
             raw_model = self.model.module if hasattr(self.model, "module") else self.model
-            sampled_action = sample(raw_model, state, 1, temperature=1.0, sample=True, actions=None,
-                rtgs=torch.tensor(rtgs, dtype=torch.long).to(self.device).unsqueeze(0).unsqueeze(-1),
+            sampled_action = sample(raw_model, state, 1, temperature=1.0, sample=True, actions=None, 
+                rtgs=torch.tensor(rtgs, dtype=torch.long).to(self.device).unsqueeze(0).unsqueeze(-1), 
                 timesteps=torch.zeros((1, 1, 1), dtype=torch.int64).to(self.device))
 
             j = 0
@@ -242,9 +262,9 @@ class Trainer:
                 rtgs += [rtgs[-1] - reward]
                 # all_states has all previous states and rtgs has all previous rtgs (will be cut to block_size in utils.sample)
                 # timestep is just current timestep
-                sampled_action = sample(raw_model, all_states.unsqueeze(0), 1, temperature=1.0, sample=True,
-                    actions=torch.tensor(actions, dtype=torch.long).to(self.device).unsqueeze(1).unsqueeze(0),
-                    rtgs=torch.tensor(rtgs, dtype=torch.long).to(self.device).unsqueeze(0).unsqueeze(-1),
+                sampled_action = sample(raw_model, all_states.unsqueeze(0), 1, temperature=1.0, sample=True, 
+                    actions=torch.tensor(actions, dtype=torch.long).to(self.device).unsqueeze(1).unsqueeze(0), 
+                    rtgs=torch.tensor(rtgs, dtype=torch.long).to(self.device).unsqueeze(0).unsqueeze(-1), 
                     timesteps=(min(j, self.config.max_timestep) * torch.ones((1, 1, 1), dtype=torch.int64).to(self.device)))
         env.close()
         eval_return = sum(T_rewards) / float(self.config.eval_episodes)
