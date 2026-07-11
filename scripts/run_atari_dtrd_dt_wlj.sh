@@ -29,11 +29,18 @@ DEVICE="${DEVICE:-cuda}"
 NUM_WORKERS="${NUM_WORKERS:-4}"
 EVAL_EPISODES="${EVAL_EPISODES:-10}"
 CHECKPOINTS_PATH="${CHECKPOINTS_PATH:-}"
+REWARD_MODE="${REWARD_MODE:-delayed}"
 ATARI_DATA_DIR="${ATARI_DATA_DIR:-$REPO_ROOT/outputs/atari/dqn_replay}"
 DATA_SOURCE="${DATA_SOURCE:-dqn_replay}"
 TFDS_DATA_DIR="${TFDS_DATA_DIR:-$REPO_ROOT/outputs/atari/tfds}"
 TFDS_RUN="${TFDS_RUN:-1}"
 DOWNLOAD_DATA="${DOWNLOAD_DATA:-1}"
+
+tfds_dataset_exists() {
+  local game="$1"
+  local version_dir="$TFDS_DATA_DIR/rlu_atari/${game}_run_${TFDS_RUN}/1.3.0"
+  [ -f "$version_dir/dataset_info.json" ] && find "$version_dir" -name 'rlu_atari-train.tfrecord-*' -type f -print -quit | grep -q .
+}
 
 REWARD_EPOCHS="${REWARD_EPOCHS:-3}"
 REWARD_CONTEXT_LENGTH="${REWARD_CONTEXT_LENGTH:-30}"
@@ -46,7 +53,17 @@ REDISTRIBUTION_BATCH_SIZE="${REDISTRIBUTION_BATCH_SIZE:-512}"
 if [ "$DOWNLOAD_DATA" = "1" ] && [ "$DATA_SOURCE" = "dqn_replay" ]; then
   GAMES="$GAMES" ATARI_DATA_DIR="$ATARI_DATA_DIR" scripts/download_atari_dqn_replay_wlj.sh
 elif [ "$DOWNLOAD_DATA" = "1" ] && [ "$DATA_SOURCE" = "tfds" ]; then
-  GAMES="$GAMES" TFDS_DATA_DIR="$TFDS_DATA_DIR" TFDS_RUN="$TFDS_RUN" scripts/download_atari_tfds_wlj.sh
+  missing_games=""
+  for game in $GAMES; do
+    if tfds_dataset_exists "$game"; then
+      echo "TFDS dataset already exists for $game: $TFDS_DATA_DIR/rlu_atari/${game}_run_${TFDS_RUN}/1.3.0"
+    else
+      missing_games="$missing_games $game"
+    fi
+  done
+  if [ -n "$missing_games" ]; then
+    GAMES="$missing_games" TFDS_DATA_DIR="$TFDS_DATA_DIR" TFDS_RUN="$TFDS_RUN" scripts/download_atari_tfds_wlj.sh
+  fi
 fi
 
 context_length_for_game() {
@@ -74,6 +91,10 @@ for game in $GAMES; do
     echo "Missing Atari dataset for $game: $ATARI_DATA_DIR/$game/1/replay_logs" >&2
     echo "Run scripts/download_atari_dqn_replay_wlj.sh or set ATARI_DATA_DIR." >&2
     exit 1
+  elif [ "$DATA_SOURCE" = "tfds" ] && [ "$DOWNLOAD_DATA" != "1" ] && ! tfds_dataset_exists "$game"; then
+    echo "Missing TFDS Atari dataset for $game: $TFDS_DATA_DIR/rlu_atari/${game}_run_${TFDS_RUN}/1.3.0" >&2
+    echo "Run scripts/download_atari_tfds_wlj.sh or set DOWNLOAD_DATA=1." >&2
+    exit 1
   elif [ "$DATA_SOURCE" != "dqn_replay" ] && [ "$DATA_SOURCE" != "tfds" ]; then
     echo "Unsupported DATA_SOURCE=$DATA_SOURCE. Use dqn_replay or tfds." >&2
     exit 1
@@ -94,6 +115,7 @@ for game in $GAMES; do
       --trajectories_per_buffer "$TRAJECTORIES_PER_BUFFER"
       --data_dir_prefix "$ATARI_DATA_DIR"
       --data_source "$DATA_SOURCE"
+      --reward_mode "$REWARD_MODE"
       --tfds_data_dir "$TFDS_DATA_DIR"
       --tfds_run "$TFDS_RUN"
       --num_workers "$NUM_WORKERS"
@@ -110,7 +132,7 @@ for game in $GAMES; do
     if [ -n "$CHECKPOINTS_PATH" ]; then
       args+=(--checkpoints_path "$CHECKPOINTS_PATH")
     fi
-    if [ "$DATA_SOURCE" = "tfds" ] && [ "$DOWNLOAD_DATA" != "1" ]; then
+    if [ "$DATA_SOURCE" = "tfds" ] && { [ "$DOWNLOAD_DATA" != "1" ] || tfds_dataset_exists "$game"; }; then
       args+=(--no-tfds_download)
     fi
     python -m algorithms.offline.atari_dtrd_dt_wlj "${args[@]}"

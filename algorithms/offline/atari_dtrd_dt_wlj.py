@@ -11,7 +11,6 @@ from torch.utils.data import DataLoader, Dataset
 from tqdm.auto import trange
 
 from algorithms.offline.atari_dt_wlj import StateActionReturnDataset, TARGET_RETURNS
-from algorithms.offline.atari_wlj.create_dataset import create_dataset
 from algorithms.offline.atari_wlj.model_atari import GPT, GPTConfig
 from algorithms.offline.atari_wlj.tfds_dataset import create_tfds_dataset
 from algorithms.offline.atari_wlj.trainer_atari import Trainer, TrainerConfig
@@ -176,6 +175,7 @@ def parse_args():
     parser.add_argument("--trajectories_per_buffer", type=int, default=10)
     parser.add_argument("--data_dir_prefix", type=str, default="./outputs/atari/dqn_replay")
     parser.add_argument("--data_source", choices=("dqn_replay", "tfds"), default="dqn_replay")
+    parser.add_argument("--reward_mode", choices=("dense", "delayed", "sparse"), default="delayed")
     parser.add_argument("--tfds_data_dir", type=str, default="./outputs/atari/tfds")
     parser.add_argument("--tfds_run", type=int, default=1)
     parser.add_argument("--tfds_download", action=argparse.BooleanOptionalAction, default=True)
@@ -227,9 +227,12 @@ def main():
             args.tfds_data_dir,
             run=args.tfds_run,
             download=args.tfds_download,
+            reward_mode=args.reward_mode,
             return_stepwise_returns=True,
         )
     else:
+        from algorithms.offline.atari_wlj.create_dataset import create_dataset
+
         data_dir_prefix = os.path.join(args.data_dir_prefix, "")
         (
             obss,
@@ -245,6 +248,7 @@ def main():
             args.game,
             data_dir_prefix,
             args.trajectories_per_buffer,
+            reward_mode=args.reward_mode,
             return_stepwise_returns=True,
         )
 

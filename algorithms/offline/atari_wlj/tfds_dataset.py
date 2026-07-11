@@ -4,6 +4,8 @@ from typing import Tuple
 import numpy as np
 from tqdm.auto import tqdm
 
+REWARD_MODES = ("dense", "delayed", "sparse")
+
 
 def _discounted_cumsum(x: np.ndarray) -> np.ndarray:
     out = np.zeros_like(x, dtype=np.float32)
@@ -15,10 +17,18 @@ def _discounted_cumsum(x: np.ndarray) -> np.ndarray:
 
 
 def _episode_steps_to_arrays(example) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    steps = example["steps"]
-    observations = steps["observation"]
-    actions = steps["action"].astype(np.int64)
-    rewards = steps["reward"].astype(np.float32)
+    # In RLDS/RLU datasets each episode's "steps" is a nested, iterable
+    # tf.data.Dataset (not a dict), so we must iterate to collect per-step
+    # fields rather than subscripting the whole thing.
+    obs_list, action_list, reward_list = [], [], []
+    for step in example["steps"]:
+        obs_list.append(np.asarray(step["observation"]))
+        action_list.append(step["action"])
+        reward_list.append(step["reward"])
+
+    observations = np.stack(obs_list, axis=0)
+    actions = np.asarray(action_list).astype(np.int64)
+    rewards = np.asarray(reward_list).astype(np.float32)
 
     if observations.ndim == 4 and observations.shape[-1] == 1:
         observations = observations[..., 0]
@@ -27,12 +37,24 @@ def _episode_steps_to_arrays(example) -> Tuple[np.ndarray, np.ndarray, np.ndarra
     return observations, actions, rewards
 
 
+def _apply_reward_mode(rewards: np.ndarray, reward_mode: str) -> np.ndarray:
+    if reward_mode == "dense":
+        return rewards
+    if reward_mode in ("delayed", "sparse"):
+        delayed_rewards = np.zeros_like(rewards, dtype=np.float32)
+        if len(delayed_rewards) > 0:
+            delayed_rewards[-1] = float(rewards.sum())
+        return delayed_rewards
+    raise ValueError(f"Unsupported reward_mode={reward_mode}. Use one of {REWARD_MODES}.")
+
+
 def create_tfds_dataset(
     num_steps: int,
     game: str,
     data_dir: str,
     run: int = 1,
     download: bool = True,
+    reward_mode: str = "dense",
     return_stepwise_returns: bool = False,
 ):
     try:
@@ -60,6 +82,9 @@ def create_tfds_dataset(
         episode_len = min(len(episode_actions), num_steps - total_steps)
         if episode_len <= 0:
             break
+        episode_rewards = _apply_reward_mode(
+            episode_rewards[:episode_len], reward_mode
+        )
 
         for t in range(episode_len):
             frame_stack.append(frames[t])

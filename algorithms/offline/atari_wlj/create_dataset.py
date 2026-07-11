@@ -2,6 +2,24 @@ import numpy as np
 
 from algorithms.offline.atari_wlj.fixed_replay_buffer import FixedReplayBuffer
 
+REWARD_MODES = ("dense", "delayed", "sparse")
+
+
+def _apply_reward_mode(stepwise_returns, done_idxs, reward_mode):
+    if reward_mode == "dense":
+        return stepwise_returns
+    if reward_mode not in ("delayed", "sparse"):
+        raise ValueError(f"Unsupported reward_mode={reward_mode}. Use one of {REWARD_MODES}.")
+
+    delayed_returns = np.zeros_like(stepwise_returns)
+    start_index = 0
+    for done_idx in done_idxs:
+        done_idx = int(done_idx)
+        if done_idx > start_index:
+            delayed_returns[done_idx - 1] = stepwise_returns[start_index:done_idx].sum()
+        start_index = done_idx
+    return delayed_returns
+
 
 def create_dataset(
     num_buffers,
@@ -9,6 +27,7 @@ def create_dataset(
     game,
     data_dir_prefix,
     trajectories_per_buffer,
+    reward_mode="dense",
     return_stepwise_returns=False,
 ):
     # -- load data from memory (make more efficient)
@@ -68,6 +87,13 @@ def create_dataset(
     returns = np.array(returns)
     stepwise_returns = np.array(stepwise_returns)
     done_idxs = np.array(done_idxs)
+    stepwise_returns = _apply_reward_mode(stepwise_returns, done_idxs, reward_mode)
+    returns = np.array(
+        [
+            stepwise_returns[start:int(done_idx)].sum()
+            for start, done_idx in zip(np.r_[0, done_idxs[:-1]], done_idxs)
+        ]
+    )
 
     # -- create reward-to-go dataset
     start_index = 0
