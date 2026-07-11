@@ -15,10 +15,14 @@ from algorithms.offline.atari_wlj.trainer_atari import Trainer, TrainerConfig
 from algorithms.offline.atari_wlj.utils import set_seed
 
 
+# Eval reward-conditioning targets. Set to the DTRD paper values (global_game_info)
+# so the DT baseline and the DTRD method are evaluated under the SAME target
+# return. Seaquest/Qbert differ from the original Decision Transformer values
+# (1150/14000); Breakout/Pong are unchanged.
 TARGET_RETURNS = {
     "Breakout": 90,
-    "Seaquest": 1150,
-    "Qbert": 14000,
+    "Seaquest": 290,
+    "Qbert": 662,
     "Pong": 20,
 }
 

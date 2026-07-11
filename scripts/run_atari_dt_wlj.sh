@@ -21,7 +21,8 @@ mkdir -p "$WANDB_DIR" "$WANDB_CACHE_DIR"
 
 GAMES="${GAMES:-Breakout Seaquest Qbert Pong}"
 MODES="${MODES:-dense delayed}"
-SEEDS="${SEEDS:-10 20 30}"
+# Seeds aligned with run_atari_dtrd_wlj.sh so DT-baseline and DTRD runs pair up.
+SEEDS="${SEEDS:-123 231 312}"
 EPOCHS="${EPOCHS:-5}"
 NUM_STEPS="${NUM_STEPS:-500000}"
 NUM_BUFFERS="${NUM_BUFFERS:-50}"
