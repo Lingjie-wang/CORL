@@ -255,16 +255,20 @@ class DTRDModelTrainer:
                 self.best_return = self.evaluate(epoch, self.best_return)
 
     @torch.no_grad()
-    def evaluate(self, epoch, best_return):
-        """DTRD evaluation: condition on target_return and decrement the RTG by
-        the LEARNED per-step redistributed reward (env reward is used only for
-        scoring). Ported from the official eval_atari.play_real_game."""
+    def _rollout_eval(self, decrement_rtg):
+        """Run eval_episodes rollouts and return the mean env return.
+
+        decrement_rtg=True  -> official DTRD conditioning: rtg starts at target
+            and is decremented each step by the LEARNED redistribution reward
+            (clipped >=0).
+        decrement_rtg=False -> DT-style control: rtg is held CONSTANT at target
+            for the whole episode (mimics how the plain DT-sparse baseline is
+            conditioned). Comparing the two isolates whether the rtg-decrement
+            mechanism is what suppresses DTRD's score.
+        """
         config = self.config
         target_return = config.eval_target_return
-        self.model.train(False)
-        self.redistribute.train(False)
         raw_model = self.model.module if hasattr(self.model, "module") else self.model
-
         args = Args(config.game.lower(), config.seed, self.device)
         env = Env(args)
         env.eval()
@@ -281,13 +285,8 @@ class DTRDModelTrainer:
             )
             j = 0
             reward_sum = 0
-            # Sliding-window buffers: sample() only ever uses the last
-            # block_size//3 == context_length steps, so we keep the histories
-            # bounded instead of accumulating the whole episode. This keeps the
-            # per-step forward and torch.cat at O(context_length) instead of the
-            # O(n^2) growth that made long eval episodes hang.
             window = config.context_length
-            prev_state = state  # (1,1,4*84*84) state before the last action
+            prev_state = state
             all_states = state
             actions = []
             while True:
@@ -301,17 +300,16 @@ class DTRDModelTrainer:
                     break
                 state = state.unsqueeze(0).unsqueeze(0).to(self.device)
 
-                # learned redistribution reward for the (state, action) just taken
-                now_action = torch.tensor(action, dtype=torch.long).to(self.device).reshape(1, 1, 1)
-                redistribute_reward = self.redistribute.get_redistribute(prev_state, now_action).item()
-                rtgs += [rtgs[-1] - redistribute_reward]
+                if decrement_rtg:
+                    # official DTRD: rtg -= learned redistribution reward, clipped >=0
+                    now_action = torch.tensor(action, dtype=torch.long).to(self.device).reshape(1, 1, 1)
+                    redistribute_reward = self.redistribute.get_redistribute(prev_state, now_action).item()
+                    rtgs += [max(0.0, rtgs[-1] - redistribute_reward)]
+                else:
+                    # DT-style control: hold rtg constant at target
+                    rtgs += [rtgs[-1]]
                 prev_state = state
 
-                # Cap all three buffers to the last `window` steps. sample()
-                # would crop to block_size//3 == window anyway, so the model
-                # inputs are identical to the un-truncated case — we just avoid
-                # building/holding the full-episode tensors. #states == #rtgs;
-                # #actions is one fewer (transitions), exactly as before.
                 all_states = torch.cat([all_states, state], dim=0)[-window:]
                 actions = actions[-window:]
                 rtgs = rtgs[-window:]
@@ -322,19 +320,35 @@ class DTRDModelTrainer:
                     timesteps=(min(j, config.max_timestep) * torch.ones((1, 1, 1), dtype=torch.int64).to(self.device)),
                 )
         env.close()
-        eval_return = sum(T_rewards) / float(config.eval_episodes)
+        return sum(T_rewards) / float(config.eval_episodes)
+
+    @torch.no_grad()
+    def evaluate(self, epoch, best_return):
+        """Run BOTH eval modes each epoch to isolate the rtg-decrement effect:
+        eval/return       = official DTRD (rtg decremented by redistribution)
+        eval/return_dt    = DT-style control (rtg held constant at target)
+        A large gap (dt >> return) means the rtg-decrement mechanism, not the
+        trained policy, is what suppresses the score."""
+        config = self.config
+        self.model.train(False)
+        self.redistribute.train(False)
+
+        eval_return = self._rollout_eval(decrement_rtg=True)
+        eval_return_dt = self._rollout_eval(decrement_rtg=False)
         best_return = max(best_return, eval_return)
         wandb.log(
             {
                 "eval/return": eval_return,
+                "eval/return_dt": eval_return_dt,
                 "eval/best_return": best_return,
-                "eval/target_return": float(target_return),
+                "eval/target_return": float(config.eval_target_return),
                 "epoch": epoch,
             },
             step=self.global_step,
         )
         self.global_step += 1
-        logger.info("target return: %s, eval return: %f", str(target_return), eval_return)
+        logger.info("eval return (DTRD rtg-decrement): %f | eval return (DT constant-rtg): %f",
+                    eval_return, eval_return_dt)
         self.model.train(True)
         self.redistribute.train(True)
         return best_return

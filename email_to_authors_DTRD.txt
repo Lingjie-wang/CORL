@@ -1,9 +1,9 @@
-To: lijx@act.buaa.edu.cn
-Cc: zhutc@act.buaa.edu.cn
+To: zhutc@act.buaa.edu.cn
+Cc: qiuyue@act.buaa.edu.cn, zhouhy@act.buaa.edu.cn, lijx@act.buaa.edu.cn
 
 Subject: Missing Appendix B/C in "Towards Long-delayed Sparsity: Learning a Better Transformer through Reward Redistribution" (IJCAI-23)
 
-Dear Dr. Li,
+Dear Tianchen,
 
 I'm reproducing DTRD from your IJCAI-23 paper "Towards Long-delayed Sparsity: Learning a Better Transformer through Reward Redistribution". The proceedings version (pp. 4693-4701) references Appendix B (reward model details) and Appendix C (experimental settings, baseline details, extra experiments) several times, but they're not included in the PDF I have.
 
