@@ -48,6 +48,7 @@ class TrainerConfig:
     device = "cuda"
     eval_episodes = 10
     eval_target_return = None
+    eval_rtg_update = "dense"
     eval_every_steps = None # if set, also evaluate every N training steps (in addition to once per epoch)
     num_workers = 0 # for DataLoader
 
@@ -259,7 +260,14 @@ class Trainer:
 
                 all_states = torch.cat([all_states, state], dim=0)
 
-                rtgs += [rtgs[-1] - reward]
+                if self.config.eval_rtg_update == "dense":
+                    rtgs += [rtgs[-1] - reward]
+                elif self.config.eval_rtg_update == "delayed":
+                    rtgs += [rtgs[-1]]
+                else:
+                    raise ValueError(
+                        f"Unsupported eval_rtg_update={self.config.eval_rtg_update}"
+                    )
                 # all_states has all previous states and rtgs has all previous rtgs (will be cut to block_size in utils.sample)
                 # timestep is just current timestep
                 sampled_action = sample(raw_model, all_states.unsqueeze(0), 1, temperature=1.0, sample=True, 

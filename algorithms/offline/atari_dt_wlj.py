@@ -100,6 +100,16 @@ def parse_args():
     parser.add_argument("--eval_episodes", type=int, default=10)
     parser.add_argument("--eval_target_return", type=int, default=None)
     parser.add_argument(
+        "--eval_rtg_update",
+        choices=("dense", "delayed"),
+        default=None,
+        help=(
+            "How to update RTG during online eval. By default, dense reward "
+            "runs subtract the environment reward each step, while sparse/"
+            "delayed reward runs keep RTG constant until episode end."
+        ),
+    )
+    parser.add_argument(
         "--eval_every_steps",
         type=int,
         default=None,
@@ -117,14 +127,19 @@ def main():
         datefmt="%m/%d/%Y %H:%M:%S",
         level=logging.INFO,
     )
+    if args.eval_rtg_update is None:
+        args.eval_rtg_update = (
+            "delayed" if args.reward_mode in ("sparse", "delayed") else "dense"
+        )
 
     # init wandb session for logging. group by game+reward_mode so that the
     # dense/delayed x multi-seed runs are aggregated together, and give each
     # run a unique, descriptive name.
     wandb_config = vars(args).copy()
-    wandb_config["group"] = f"{args.group}-{args.game}-{args.reward_mode}"
+    eval_suffix = "" if args.eval_rtg_update == "dense" else f"-eval-{args.eval_rtg_update}"
+    wandb_config["group"] = f"{args.group}-{args.game}-{args.reward_mode}{eval_suffix}"
     wandb_config["name"] = (
-        f"{args.name}-{args.game}-{args.reward_mode}-{args.seed}-{str(uuid.uuid4())[:8]}"
+        f"{args.name}-{args.game}-{args.reward_mode}{eval_suffix}-{args.seed}-{str(uuid.uuid4())[:8]}"
     )
     wandb_init(wandb_config)
 
@@ -186,6 +201,7 @@ def main():
         device=args.device,
         eval_episodes=args.eval_episodes,
         eval_target_return=args.eval_target_return or TARGET_RETURNS.get(args.game),
+        eval_rtg_update=args.eval_rtg_update,
         eval_every_steps=args.eval_every_steps,
         ckpt_path=ckpt_path,
     )

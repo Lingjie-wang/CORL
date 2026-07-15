@@ -30,6 +30,7 @@ TRAJECTORIES_PER_BUFFER="${TRAJECTORIES_PER_BUFFER:-10}"
 DEVICE="${DEVICE:-cuda}"
 NUM_WORKERS="${NUM_WORKERS:-4}"
 EVAL_EPISODES="${EVAL_EPISODES:-10}"
+EVAL_RTG_UPDATE="${EVAL_RTG_UPDATE:-}"
 EVAL_EVERY_STEPS="${EVAL_EVERY_STEPS:-}"
 CHECKPOINTS_PATH="${CHECKPOINTS_PATH:-}"
 ATARI_DATA_DIR="${ATARI_DATA_DIR:-$REPO_ROOT/outputs/atari/dqn_replay}"
@@ -141,6 +142,9 @@ for game in $GAMES; do
       fi
       if [ -n "$EVAL_EVERY_STEPS" ]; then
         args+=(--eval_every_steps "$EVAL_EVERY_STEPS")
+      fi
+      if [ -n "$EVAL_RTG_UPDATE" ]; then
+        args+=(--eval_rtg_update "$EVAL_RTG_UPDATE")
       fi
       if [ "$DATA_SOURCE" = "tfds" ] && { [ "$DOWNLOAD_DATA" != "1" ] || tfds_dataset_exists "$game"; }; then
         args+=(--no-tfds_download)
