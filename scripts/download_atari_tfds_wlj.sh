@@ -4,7 +4,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-CONDA_ENV="${CONDA_ENV:-corlenv}"
+CONDA_ENV="${CONDA_ENV:-corl}"
 if [ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ]; then
   source "$HOME/miniconda3/etc/profile.d/conda.sh"
   conda activate "$CONDA_ENV"
@@ -15,7 +15,7 @@ fi
 
 GAMES="${GAMES:-Breakout Seaquest Qbert Pong}"
 TFDS_RUN="${TFDS_RUN:-1}"
-TFDS_DATA_DIR="${TFDS_DATA_DIR:-$REPO_ROOT/outputs/atari/tfds}"
+TFDS_DATA_DIR="${TFDS_DATA_DIR:-$REPO_ROOT/data/atari/tfds}"
 
 mkdir -p "$TFDS_DATA_DIR"
 
