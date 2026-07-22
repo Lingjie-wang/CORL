@@ -20,6 +20,7 @@ RAW_DATA_DIR="${RAW_DATA_DIR:-$REPO_ROOT/outputs/atari/rl_unplugged_raw}"
 RAW_INPUT_PREFIX="${RAW_INPUT_PREFIX:-$RAW_DATA_DIR/atari_episodes_ordered}"
 DOWNLOAD_RAW_SHARDS="${DOWNLOAD_RAW_SHARDS:-1}"
 USE_LOCAL_RAW_SHARDS="${USE_LOCAL_RAW_SHARDS:-1}"
+TFDS_GENERATION_MODE="${TFDS_GENERATION_MODE:-sequential}"
 PARALLEL_DOWNLOADS="${PARALLEL_DOWNLOADS:-4}"
 GCS_ATARI_BASE_URL="${GCS_ATARI_BASE_URL:-https://storage.googleapis.com/rl_unplugged/atari_episodes_ordered}"
 CURL_RETRIES="${CURL_RETRIES:-50}"
@@ -140,23 +141,35 @@ for game in $GAMES; do
   fi
 
   echo "Downloading/preparing TFDS rlu_atari/${game}_run_${TFDS_RUN} to $TFDS_DATA_DIR"
-  python - "$game" "$TFDS_RUN" "$TFDS_DATA_DIR" "$RAW_INPUT_PREFIX" "$USE_LOCAL_RAW_SHARDS" <<'PY'
+  python - "$game" "$TFDS_RUN" "$TFDS_DATA_DIR" "$RAW_INPUT_PREFIX" "$USE_LOCAL_RAW_SHARDS" "$TFDS_GENERATION_MODE" <<'PY'
 import os
 import sys
 
 import tensorflow_datasets as tfds
 
-game, run, data_dir, raw_input_prefix, use_local_raw_shards = sys.argv[1:]
+game, run, data_dir, raw_input_prefix, use_local_raw_shards, generation_mode = sys.argv[1:]
 
 if use_local_raw_shards == "1":
+    from tensorflow_datasets.rl_unplugged import rlu_common
     from tensorflow_datasets.rl_unplugged.rlu_atari import rlu_atari
 
     rlu_atari.RluAtari._INPUT_FILE_PREFIX = os.path.abspath(raw_input_prefix)
+    if generation_mode == "sequential":
+        def _sequential_generate_examples(self, paths):
+            for path in paths["file_paths"]:
+                yield from self.generate_examples_one_file(path)
+
+        rlu_common.RLUBuilder._generate_examples = _sequential_generate_examples
+    elif generation_mode != "beam":
+        raise ValueError(
+            f"Unsupported TFDS_GENERATION_MODE={generation_mode!r}; use sequential or beam"
+        )
 
 builder = tfds.builder(f"rlu_atari/{game}_run_{run}", data_dir=data_dir)
 print("TFDS builder:", builder.info.full_name)
 print("TFDS data dir:", data_dir)
 print("RLU input prefix:", builder.get_file_prefix())
+print("TFDS generation mode:", generation_mode)
 builder.download_and_prepare()
 print(builder.info)
 PY

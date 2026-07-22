@@ -14,7 +14,7 @@ if [ -f "$REPO_ROOT/.wandb.env" ]; then
   set +a
 fi
 
-CONDA_ENV="${CONDA_ENV:-corlenv}"
+CONDA_ENV="${CONDA_ENV:-corl}"
 if [ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ]; then
   source "$HOME/miniconda3/etc/profile.d/conda.sh"
   conda activate "$CONDA_ENV"
@@ -29,8 +29,8 @@ export WANDB_CACHE_DIR="${WANDB_CACHE_DIR:-$REPO_ROOT/outputs/wandb_cache}"
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-max_split_size_mb:128}"
 mkdir -p "$WANDB_DIR" "$WANDB_CACHE_DIR"
 
-GAMES="${GAMES:-Breakout Seaquest Qbert Pong}"
-MODES="${MODES:-dense delayed}"
+GAMES="${GAMES:-Seaquest}"
+MODES="${MODES:-dense}"
 # Seeds aligned with run_atari_dtrd_wlj.sh so DT-baseline and DTRD runs pair up.
 SEEDS="${SEEDS:-10 20 30}"
 EPOCHS="${EPOCHS:-5}"
@@ -40,7 +40,8 @@ TRAJECTORIES_PER_BUFFER="${TRAJECTORIES_PER_BUFFER:-10}"
 DEVICE="${DEVICE:-cuda}"
 NUM_WORKERS="${NUM_WORKERS:-4}"
 EVAL_EPISODES="${EVAL_EPISODES:-10}"
-EVAL_RTG_UPDATE="${EVAL_RTG_UPDATE:-}"
+EVAL_TARGET_RETURN="${EVAL_TARGET_RETURN:-290}"
+EVAL_RTG_UPDATE="${EVAL_RTG_UPDATE:-clipped_dense}"
 EVAL_EVERY_STEPS="${EVAL_EVERY_STEPS:-}"
 CHECKPOINTS_PATH="${CHECKPOINTS_PATH:-}"
 ATARI_DATA_DIR="${ATARI_DATA_DIR:-$REPO_ROOT/outputs/atari/dqn_replay}"
@@ -48,8 +49,10 @@ DATA_SOURCE="${DATA_SOURCE:-tfds}"
 TFDS_DATA_DIR="${TFDS_DATA_DIR:-$REPO_ROOT/data/atari/tfds_checkpoints_ordered}"
 TFDS_RUN="${TFDS_RUN:-1}"
 TFDS_CHECKPOINT_SPLITS="${TFDS_CHECKPOINT_SPLITS:-all}"
+TFDS_SAMPLING_MODE="${TFDS_SAMPLING_MODE:-balanced}"
+TFDS_SAMPLING_SEED="${TFDS_SAMPLING_SEED:-}"
 TFDS_RAW_INPUT_PREFIX="${TFDS_RAW_INPUT_PREFIX:-$REPO_ROOT/outputs/atari/rl_unplugged_raw/atari_episodes_ordered}"
-DOWNLOAD_DATA="${DOWNLOAD_DATA:-1}"
+DOWNLOAD_DATA="${DOWNLOAD_DATA:-0}"
 
 tfds_dataset_exists() {
   local game="$1"
@@ -146,6 +149,7 @@ for game in $GAMES; do
         --tfds_data_dir "$TFDS_DATA_DIR"
         --tfds_run "$TFDS_RUN"
         --tfds_checkpoint_splits "$TFDS_CHECKPOINT_SPLITS"
+        --tfds_sampling_mode "$TFDS_SAMPLING_MODE"
         --tfds_raw_input_prefix "$TFDS_RAW_INPUT_PREFIX"
         --num_workers "$NUM_WORKERS"
         --device "$DEVICE"
@@ -156,6 +160,12 @@ for game in $GAMES; do
       fi
       if [ -n "$EVAL_EVERY_STEPS" ]; then
         args+=(--eval_every_steps "$EVAL_EVERY_STEPS")
+      fi
+      if [ -n "$EVAL_TARGET_RETURN" ]; then
+        args+=(--eval_target_return "$EVAL_TARGET_RETURN")
+      fi
+      if [ -n "$TFDS_SAMPLING_SEED" ]; then
+        args+=(--tfds_sampling_seed "$TFDS_SAMPLING_SEED")
       fi
       if [ -n "$EVAL_RTG_UPDATE" ]; then
         args+=(--eval_rtg_update "$EVAL_RTG_UPDATE")

@@ -262,6 +262,8 @@ class Trainer:
 
                 if self.config.eval_rtg_update == "dense":
                     rtgs += [rtgs[-1] - reward]
+                elif self.config.eval_rtg_update == "clipped_dense":
+                    rtgs += [rtgs[-1] - float(np.clip(reward, -1.0, 1.0))]
                 elif self.config.eval_rtg_update == "delayed":
                     rtgs += [rtgs[-1]]
                 else:

@@ -12,6 +12,7 @@ from algorithms.offline.atari_wlj.tfds_dataset import (
 
 CHECKPOINTS_ORDERED_VERSION = "1.1.0"
 DEFAULT_NUM_CHECKPOINTS = 50
+SAMPLING_MODES = ("sequential", "balanced")
 
 
 def _disable_tfds_gcs_metadata_lookup() -> None:
@@ -61,6 +62,31 @@ def _checkpoint_split_names(
     return split_names
 
 
+def _split_step_targets(num_steps: int, num_splits: int) -> List[int]:
+    base_steps = num_steps // num_splits
+    remainder = num_steps % num_splits
+    return [
+        base_steps + (1 if split_idx < remainder else 0)
+        for split_idx in range(num_splits)
+    ]
+
+
+def _iter_shuffled_split_examples(builder, split_name: str, read_config, tfds, rng):
+    num_examples = builder.info.splits[split_name].num_examples
+    episode_indices = np.arange(num_examples)
+    rng.shuffle(episode_indices)
+
+    for episode_idx in episode_indices:
+        dataset = tfds.as_numpy(
+            builder.as_dataset(
+                split=f"{split_name}[{int(episode_idx)}:{int(episode_idx) + 1}]",
+                read_config=read_config,
+                shuffle_files=False,
+            )
+        )
+        yield from dataset
+
+
 def create_tfds_checkpoints_ordered_dataset(
     num_steps: int,
     game: str,
@@ -71,6 +97,8 @@ def create_tfds_checkpoints_ordered_dataset(
     return_stepwise_returns: bool = False,
     checkpoint_splits: Optional[Union[str, Iterable[Union[str, int]]]] = None,
     raw_input_prefix: Optional[str] = None,
+    sampling_mode: str = "sequential",
+    sampling_seed: int = 0,
 ):
     try:
         import tensorflow_datasets as tfds
@@ -91,6 +119,11 @@ def create_tfds_checkpoints_ordered_dataset(
         download_config = tfds.download.DownloadConfig(try_download_gcs=False)
         builder.download_and_prepare(download_config=download_config)
 
+    if sampling_mode not in SAMPLING_MODES:
+        raise ValueError(
+            f"Unsupported sampling_mode={sampling_mode}. Use one of {SAMPLING_MODES}."
+        )
+
     split_names = _checkpoint_split_names(
         checkpoint_splits,
         num_checkpoints=builder.num_shards(),
@@ -107,20 +140,46 @@ def create_tfds_checkpoints_ordered_dataset(
         desc=f"Loading TFDS rlu_atari_checkpoints_ordered/{game}_run_{run}",
         total=num_steps,
     )
-    for split_name in split_names:
-        dataset = tfds.as_numpy(
-            builder.as_dataset(
-                split=split_name,
-                read_config=read_config,
-                shuffle_files=False,
+    split_step_targets = (
+        _split_step_targets(num_steps, len(split_names))
+        if sampling_mode == "balanced"
+        else [num_steps] * len(split_names)
+    )
+    print(
+        "TFDS checkpoint sampling:",
+        f"mode={sampling_mode}",
+        f"splits={len(split_names)}",
+        f"step_targets={sorted(set(split_step_targets))}",
+    )
+    for split_idx, (split_name, split_step_target) in enumerate(
+        zip(split_names, split_step_targets)
+    ):
+        if split_step_target <= 0:
+            continue
+        if sampling_mode == "balanced":
+            rng = np.random.RandomState(sampling_seed + split_idx)
+            dataset = _iter_shuffled_split_examples(
+                builder, split_name, read_config, tfds, rng
             )
-        )
+        else:
+            dataset = tfds.as_numpy(
+                builder.as_dataset(
+                    split=split_name,
+                    read_config=read_config,
+                    shuffle_files=False,
+                )
+            )
+        split_steps = 0
         for example in dataset:
             frames, episode_actions, episode_rewards = _episode_steps_to_arrays(example)
             frame_stack = [
                 np.zeros((84, 84), dtype=np.uint8) for _ in range(4)
             ]
-            episode_len = min(len(episode_actions), num_steps - total_steps)
+            episode_len = min(
+                len(episode_actions),
+                num_steps - total_steps,
+                split_step_target - split_steps,
+            )
             if episode_len <= 0:
                 break
             episode_rewards = _apply_reward_mode(
@@ -136,11 +195,12 @@ def create_tfds_checkpoints_ordered_dataset(
                 returns[-1] += reward
                 timesteps.append(t)
                 total_steps += 1
+                split_steps += 1
                 pbar.update(1)
 
             done_idxs.append(len(obss))
             returns.append(0.0)
-            if total_steps >= num_steps:
+            if total_steps >= num_steps or split_steps >= split_step_target:
                 break
         if total_steps >= num_steps:
             break

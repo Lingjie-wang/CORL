@@ -101,12 +101,13 @@ def parse_args():
     parser.add_argument("--eval_target_return", type=int, default=None)
     parser.add_argument(
         "--eval_rtg_update",
-        choices=("dense", "delayed"),
+        choices=("dense", "clipped_dense", "delayed"),
         default=None,
         help=(
             "How to update RTG during online eval. By default, dense reward "
-            "runs subtract the environment reward each step, while sparse/"
-            "delayed reward runs keep RTG constant until episode end."
+            "runs subtract the environment reward each step, clipped_dense "
+            "subtracts reward clipped to [-1, 1], while sparse/delayed reward "
+            "runs keep RTG constant until episode end."
         ),
     )
     parser.add_argument(

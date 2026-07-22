@@ -40,6 +40,7 @@ TRAJECTORIES_PER_BUFFER="${TRAJECTORIES_PER_BUFFER:-10}"
 DEVICE="${DEVICE:-cuda}"
 NUM_WORKERS="${NUM_WORKERS:-4}"
 EVAL_EPISODES="${EVAL_EPISODES:-10}"
+EVAL_TARGET_RETURN="${EVAL_TARGET_RETURN:-}"
 EVAL_RTG_UPDATE="${EVAL_RTG_UPDATE:-}"
 EVAL_EVERY_STEPS="${EVAL_EVERY_STEPS:-}"
 CHECKPOINTS_PATH="${CHECKPOINTS_PATH:-}"
@@ -152,6 +153,9 @@ for game in $GAMES; do
       fi
       if [ -n "$EVAL_EVERY_STEPS" ]; then
         args+=(--eval_every_steps "$EVAL_EVERY_STEPS")
+      fi
+      if [ -n "$EVAL_TARGET_RETURN" ]; then
+        args+=(--eval_target_return "$EVAL_TARGET_RETURN")
       fi
       if [ -n "$EVAL_RTG_UPDATE" ]; then
         args+=(--eval_rtg_update "$EVAL_RTG_UPDATE")

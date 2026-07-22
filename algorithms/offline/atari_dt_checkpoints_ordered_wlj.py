@@ -91,6 +91,8 @@ def parse_args():
     parser.add_argument("--tfds_data_dir", type=str, default="./data/atari/tfds_checkpoints_ordered")
     parser.add_argument("--tfds_run", type=int, default=1)
     parser.add_argument("--tfds_checkpoint_splits", type=str, default="all")
+    parser.add_argument("--tfds_sampling_mode", choices=("sequential", "balanced"), default="sequential")
+    parser.add_argument("--tfds_sampling_seed", type=int, default=None)
     parser.add_argument("--tfds_raw_input_prefix", type=str, default=None)
     parser.add_argument("--tfds_download", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--learning_rate", type=float, default=6e-4)
@@ -103,12 +105,13 @@ def parse_args():
     parser.add_argument("--eval_target_return", type=int, default=None)
     parser.add_argument(
         "--eval_rtg_update",
-        choices=("dense", "delayed"),
+        choices=("dense", "clipped_dense", "delayed"),
         default=None,
         help=(
             "How to update RTG during online eval. By default, dense reward "
-            "runs subtract the environment reward each step, while sparse/"
-            "delayed reward runs keep RTG constant until episode end."
+            "runs subtract the environment reward each step, clipped_dense "
+            "subtracts reward clipped to [-1, 1], while sparse/delayed reward "
+            "runs keep RTG constant until episode end."
         ),
     )
     parser.add_argument(
@@ -133,15 +136,21 @@ def main():
         args.eval_rtg_update = (
             "delayed" if args.reward_mode in ("sparse", "delayed") else "dense"
         )
+    if args.tfds_sampling_seed is None:
+        args.tfds_sampling_seed = args.seed
 
     # init wandb session for logging. group by game+reward_mode so that the
     # dense/delayed x multi-seed runs are aggregated together, and give each
     # run a unique, descriptive name.
     wandb_config = vars(args).copy()
     eval_suffix = "" if args.eval_rtg_update == "dense" else f"-eval-{args.eval_rtg_update}"
-    wandb_config["group"] = f"{args.group}-{args.game}-{args.reward_mode}{eval_suffix}"
+    sampling_suffix = (
+        "" if args.data_source != "tfds" or args.tfds_sampling_mode == "sequential"
+        else f"-{args.tfds_sampling_mode}"
+    )
+    wandb_config["group"] = f"{args.group}-{args.game}-{args.reward_mode}{sampling_suffix}{eval_suffix}"
     wandb_config["name"] = (
-        f"{args.name}-{args.game}-{args.reward_mode}{eval_suffix}-{args.seed}-{str(uuid.uuid4())[:8]}"
+        f"{args.name}-{args.game}-{args.reward_mode}{sampling_suffix}{eval_suffix}-{args.seed}-{str(uuid.uuid4())[:8]}"
     )
     wandb_init(wandb_config)
 
@@ -155,6 +164,8 @@ def main():
             reward_mode=args.reward_mode,
             checkpoint_splits=args.tfds_checkpoint_splits,
             raw_input_prefix=args.tfds_raw_input_prefix,
+            sampling_mode=args.tfds_sampling_mode,
+            sampling_seed=args.tfds_sampling_seed,
         )
     else:
         from algorithms.offline.atari_wlj.create_dataset import create_dataset
