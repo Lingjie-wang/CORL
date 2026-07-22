@@ -14,3 +14,11 @@ protobuf==3.20.3
 setuptools==80.9.0
 dopamine-rl==4.0.0
 atari-py
+# atari-py ships without game ROMs (only tetris.bin), but online evaluation
+# launches the real Atari emulator via atari_py.ALEInterface and will crash with
+# "ROM is missing for <game>" without them. autorom downloads the licensed ROM
+# pack at install time; then import them into atari-py's ROM dir with:
+#   AutoROM --accept-license
+#   python -m atari_py.import_roms "$(python -c 'import AutoROM, os; print(os.path.join(os.path.dirname(AutoROM.__file__), "roms"))')"
+# Or just run scripts/setup_atari_roms_wlj.sh, which does all of the above.
+autorom[accept-rom-license]

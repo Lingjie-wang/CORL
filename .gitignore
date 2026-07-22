@@ -150,3 +150,6 @@ dmypy.json
 wandb
 outputs/
 assets/outputs/
+
+# repo-local wandb credentials (personal, never commit)
+.wandb.env

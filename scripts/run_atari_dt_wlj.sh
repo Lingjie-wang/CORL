@@ -4,6 +4,16 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
+# Load repo-local wandb credentials if present. This keeps your personal
+# WANDB_API_KEY scoped to this directory only: it overrides the global
+# ~/.netrc for runs launched here, without touching that shared file.
+if [ -f "$REPO_ROOT/.wandb.env" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$REPO_ROOT/.wandb.env"
+  set +a
+fi
+
 CONDA_ENV="${CONDA_ENV:-corlenv}"
 if [ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ]; then
   source "$HOME/miniconda3/etc/profile.d/conda.sh"
