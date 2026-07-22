@@ -13,9 +13,9 @@ elif [ -f /root/miniconda3/etc/profile.d/conda.sh ]; then
   conda activate "$CONDA_ENV"
 fi
 
-GAMES="${GAMES:-Qbert}"
+GAMES="${GAMES:-Seaquest}"
 TFDS_RUN="${TFDS_RUN:-1}"
-TFDS_DATA_DIR="${TFDS_DATA_DIR:-$REPO_ROOT/data/atari/tfds}"
+TFDS_DATA_DIR="${TFDS_DATA_DIR:-$REPO_ROOT/data/atari/tfds_checkpoints_ordered}"
 RAW_DATA_DIR="${RAW_DATA_DIR:-$REPO_ROOT/outputs/atari/rl_unplugged_raw}"
 RAW_INPUT_PREFIX="${RAW_INPUT_PREFIX:-$RAW_DATA_DIR/atari_episodes_ordered}"
 DOWNLOAD_RAW_SHARDS="${DOWNLOAD_RAW_SHARDS:-1}"
@@ -139,25 +139,36 @@ for game in $GAMES; do
     download_raw_shards "$game" "$num_shards"
   fi
 
-  echo "Downloading/preparing TFDS rlu_atari/${game}_run_${TFDS_RUN} to $TFDS_DATA_DIR"
+  echo "Preparing TFDS rlu_atari_checkpoints_ordered/${game}_run_${TFDS_RUN} to $TFDS_DATA_DIR"
   python - "$game" "$TFDS_RUN" "$TFDS_DATA_DIR" "$RAW_INPUT_PREFIX" "$USE_LOCAL_RAW_SHARDS" <<'PY'
 import os
 import sys
 
 import tensorflow_datasets as tfds
+from tensorflow_datasets.core.utils import gcs_utils
 
 game, run, data_dir, raw_input_prefix, use_local_raw_shards = sys.argv[1:]
 
+gcs_utils._is_gcs_disabled = True  # pylint: disable=protected-access
 if use_local_raw_shards == "1":
-    from tensorflow_datasets.rl_unplugged.rlu_atari import rlu_atari
+    from tensorflow_datasets.rl_unplugged.rlu_atari_checkpoints_ordered import (
+        rlu_atari_checkpoints_ordered,
+    )
 
-    rlu_atari.RluAtari._INPUT_FILE_PREFIX = os.path.abspath(raw_input_prefix)
+    rlu_atari_checkpoints_ordered.RluAtariCheckpointsOrdered._INPUT_FILE_PREFIX = os.path.abspath(
+        raw_input_prefix
+    )
 
-builder = tfds.builder(f"rlu_atari/{game}_run_{run}", data_dir=data_dir)
+builder = tfds.builder(
+    f"rlu_atari_checkpoints_ordered/{game}_run_{run}",
+    data_dir=data_dir,
+)
 print("TFDS builder:", builder.info.full_name)
 print("TFDS data dir:", data_dir)
 print("RLU input prefix:", builder.get_file_prefix())
-builder.download_and_prepare()
+builder.download_and_prepare(
+    download_config=tfds.download.DownloadConfig(try_download_gcs=False)
+)
 print(builder.info)
 PY
 done
