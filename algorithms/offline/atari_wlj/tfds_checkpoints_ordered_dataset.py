@@ -12,7 +12,7 @@ from algorithms.offline.atari_wlj.tfds_dataset import (
 
 CHECKPOINTS_ORDERED_VERSION = "1.1.0"
 DEFAULT_NUM_CHECKPOINTS = 50
-SAMPLING_MODES = ("sequential", "balanced")
+SAMPLING_MODES = ("sequential", "balanced", "dt_replay")
 
 
 def _disable_tfds_gcs_metadata_lookup() -> None:
@@ -99,6 +99,7 @@ def create_tfds_checkpoints_ordered_dataset(
     raw_input_prefix: Optional[str] = None,
     sampling_mode: str = "sequential",
     sampling_seed: int = 0,
+    trajectories_per_buffer: int = 10,
 ):
     try:
         import tensorflow_datasets as tfds
@@ -150,60 +151,118 @@ def create_tfds_checkpoints_ordered_dataset(
         f"mode={sampling_mode}",
         f"splits={len(split_names)}",
         f"step_targets={sorted(set(split_step_targets))}",
+        f"trajectories_per_buffer={trajectories_per_buffer}",
     )
-    for split_idx, (split_name, split_step_target) in enumerate(
-        zip(split_names, split_step_targets)
-    ):
-        if split_step_target <= 0:
-            continue
-        if sampling_mode == "balanced":
-            rng = np.random.RandomState(sampling_seed + split_idx)
-            dataset = _iter_shuffled_split_examples(
-                builder, split_name, read_config, tfds, rng
-            )
-        else:
-            dataset = tfds.as_numpy(
-                builder.as_dataset(
-                    split=split_name,
-                    read_config=read_config,
-                    shuffle_files=False,
+
+    def append_example(example, max_episode_steps: int) -> int:
+        nonlocal total_steps
+
+        frames, episode_actions, episode_rewards = _episode_steps_to_arrays(example)
+        frame_stack = [
+            np.zeros((84, 84), dtype=np.uint8) for _ in range(4)
+        ]
+        episode_len = min(
+            len(episode_actions),
+            num_steps - total_steps,
+            max_episode_steps,
+        )
+        if episode_len <= 0:
+            return 0
+        episode_rewards = _apply_reward_mode(
+            episode_rewards[:episode_len], reward_mode
+        )
+
+        for t in range(episode_len):
+            frame_stack = frame_stack[1:] + [frames[t]]
+            obss.append(np.stack(frame_stack, axis=0))
+            actions.append(int(episode_actions[t]))
+            reward = float(episode_rewards[t])
+            stepwise_returns.append(reward)
+            returns[-1] += reward
+            timesteps.append(t)
+            total_steps += 1
+            pbar.update(1)
+
+        done_idxs.append(len(obss))
+        returns.append(0.0)
+        return episode_len
+
+    if sampling_mode == "dt_replay":
+        rng = np.random.RandomState(sampling_seed)
+        split_iters = {}
+
+        def get_split_iter(split_name):
+            if split_name not in split_iters:
+                split_iters[split_name] = iter(
+                    tfds.as_numpy(
+                        builder.as_dataset(
+                            split=split_name,
+                            read_config=read_config,
+                            shuffle_files=False,
+                        )
+                    )
                 )
-            )
-        split_steps = 0
-        for example in dataset:
-            frames, episode_actions, episode_rewards = _episode_steps_to_arrays(example)
-            frame_stack = [
-                np.zeros((84, 84), dtype=np.uint8) for _ in range(4)
+            return split_iters[split_name]
+
+        exhausted_splits = set()
+        split_steps = {split_name: 0 for split_name in split_names}
+        while total_steps < num_steps and len(exhausted_splits) < len(split_names):
+            available_splits = [
+                split_name for split_name in split_names
+                if split_name not in exhausted_splits
             ]
-            episode_len = min(
-                len(episode_actions),
-                num_steps - total_steps,
-                split_step_target - split_steps,
-            )
-            if episode_len <= 0:
+            split_name = available_splits[int(rng.randint(len(available_splits)))]
+            loaded_trajectories = 0
+            while (
+                total_steps < num_steps
+                and loaded_trajectories < trajectories_per_buffer
+            ):
+                try:
+                    example = next(get_split_iter(split_name))
+                except StopIteration:
+                    exhausted_splits.add(split_name)
+                    break
+                episode_steps = append_example(example, num_steps - total_steps)
+                if episode_steps > 0:
+                    split_steps[split_name] += episode_steps
+                    loaded_trajectories += 1
+        print(
+            "TFDS dt_replay split step stats:",
+            f"min={min(split_steps.values()) if split_steps else 0}",
+            f"max={max(split_steps.values()) if split_steps else 0}",
+        )
+    else:
+        for split_idx, (split_name, split_step_target) in enumerate(
+            zip(split_names, split_step_targets)
+        ):
+            if split_step_target <= 0:
+                continue
+            if sampling_mode == "balanced":
+                rng = np.random.RandomState(sampling_seed + split_idx)
+                dataset = _iter_shuffled_split_examples(
+                    builder, split_name, read_config, tfds, rng
+                )
+            else:
+                dataset = tfds.as_numpy(
+                    builder.as_dataset(
+                        split=split_name,
+                        read_config=read_config,
+                        shuffle_files=False,
+                    )
+                )
+            split_steps = 0
+            for example in dataset:
+                episode_steps = append_example(
+                    example, split_step_target - split_steps
+                )
+                split_steps += episode_steps
+                if (
+                    total_steps >= num_steps
+                    or split_steps >= split_step_target
+                ):
+                    break
+            if total_steps >= num_steps:
                 break
-            episode_rewards = _apply_reward_mode(
-                episode_rewards[:episode_len], reward_mode
-            )
-
-            for t in range(episode_len):
-                frame_stack = frame_stack[1:] + [frames[t]]
-                obss.append(np.stack(frame_stack, axis=0))
-                actions.append(int(episode_actions[t]))
-                reward = float(episode_rewards[t])
-                stepwise_returns.append(reward)
-                returns[-1] += reward
-                timesteps.append(t)
-                total_steps += 1
-                split_steps += 1
-                pbar.update(1)
-
-            done_idxs.append(len(obss))
-            returns.append(0.0)
-            if total_steps >= num_steps or split_steps >= split_step_target:
-                break
-        if total_steps >= num_steps:
-            break
     pbar.close()
 
     if returns and returns[-1] == 0.0:

@@ -25,6 +25,17 @@ fi
 # Games needed by the run scripts; extend if you add more.
 CHECK_GAMES="${CHECK_GAMES:-seaquest breakout qbert pong}"
 
+without_proxy_env() {
+  env \
+    -u http_proxy \
+    -u https_proxy \
+    -u HTTP_PROXY \
+    -u HTTPS_PROXY \
+    -u ALL_PROXY \
+    -u all_proxy \
+    "$@"
+}
+
 if python - "$CHECK_GAMES" <<'PY'
 import sys
 import atari_py
@@ -42,8 +53,8 @@ then
 fi
 
 echo "Some ROMs are missing; installing via AutoROM..."
-python -m pip install "autorom[accept-rom-license]"
-AutoROM --accept-license
+without_proxy_env python -m pip install "autorom[accept-rom-license]"
+without_proxy_env AutoROM --accept-license
 
 AUTOROM_DIR="$(python -c 'import AutoROM, os; print(os.path.join(os.path.dirname(AutoROM.__file__), "roms"))')"
 echo "Importing ROMs from $AUTOROM_DIR into atari-py..."

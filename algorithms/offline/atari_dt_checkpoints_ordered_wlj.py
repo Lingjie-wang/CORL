@@ -10,7 +10,10 @@ import wandb
 from torch.utils.data import Dataset
 
 from algorithms.offline.atari_wlj.model_atari import GPT, GPTConfig
-from algorithms.offline.atari_wlj.tfds_checkpoints_ordered_dataset import create_tfds_checkpoints_ordered_dataset as create_tfds_dataset
+from algorithms.offline.atari_wlj.tfds_checkpoints_ordered_dataset import (
+    SAMPLING_MODES,
+    create_tfds_checkpoints_ordered_dataset as create_tfds_dataset,
+)
 from algorithms.offline.atari_wlj.trainer_atari import Trainer, TrainerConfig
 from algorithms.offline.atari_wlj.utils import set_seed
 
@@ -76,6 +79,12 @@ def parse_args():
     parser.add_argument("--project", type=str, default="CORL")
     parser.add_argument("--group", type=str, default="DT-Atari")
     parser.add_argument("--name", type=str, default="DT")
+    parser.add_argument(
+        "--wandb_suffix",
+        type=str,
+        default="",
+        help="Optional suffix appended to generated wandb group/name, e.g. target290.",
+    )
     parser.add_argument("--seed", type=int, default=123)
     parser.add_argument("--context_length", type=int, default=30)
     parser.add_argument("--epochs", type=int, default=5)
@@ -91,7 +100,7 @@ def parse_args():
     parser.add_argument("--tfds_data_dir", type=str, default="./data/atari/tfds_checkpoints_ordered")
     parser.add_argument("--tfds_run", type=int, default=1)
     parser.add_argument("--tfds_checkpoint_splits", type=str, default="all")
-    parser.add_argument("--tfds_sampling_mode", choices=("sequential", "balanced"), default="sequential")
+    parser.add_argument("--tfds_sampling_mode", choices=SAMPLING_MODES, default="sequential")
     parser.add_argument("--tfds_sampling_seed", type=int, default=None)
     parser.add_argument("--tfds_raw_input_prefix", type=str, default=None)
     parser.add_argument("--tfds_download", action=argparse.BooleanOptionalAction, default=True)
@@ -148,9 +157,15 @@ def main():
         "" if args.data_source != "tfds" or args.tfds_sampling_mode == "sequential"
         else f"-{args.tfds_sampling_mode}"
     )
-    wandb_config["group"] = f"{args.group}-{args.game}-{args.reward_mode}{sampling_suffix}{eval_suffix}"
+    model_suffix = "" if args.model_type == "reward_conditioned" else f"-{args.model_type}"
+    run_suffix = f"-{args.wandb_suffix.strip('-')}" if args.wandb_suffix else ""
+    wandb_config["group"] = (
+        f"{args.group}-{args.game}-{args.reward_mode}{model_suffix}"
+        f"{sampling_suffix}{eval_suffix}{run_suffix}"
+    )
     wandb_config["name"] = (
-        f"{args.name}-{args.game}-{args.reward_mode}{sampling_suffix}{eval_suffix}-{args.seed}-{str(uuid.uuid4())[:8]}"
+        f"{args.name}-{args.game}-{args.reward_mode}{model_suffix}"
+        f"{sampling_suffix}{eval_suffix}{run_suffix}-{args.seed}-{str(uuid.uuid4())[:8]}"
     )
     wandb_init(wandb_config)
 
@@ -166,6 +181,7 @@ def main():
             raw_input_prefix=args.tfds_raw_input_prefix,
             sampling_mode=args.tfds_sampling_mode,
             sampling_seed=args.tfds_sampling_seed,
+            trajectories_per_buffer=args.trajectories_per_buffer,
         )
     else:
         from algorithms.offline.atari_wlj.create_dataset import create_dataset

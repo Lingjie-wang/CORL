@@ -229,9 +229,10 @@ class Trainer:
         env.eval()
 
         T_rewards = []
-        done = True
         for i in range(self.config.eval_episodes):
             state = env.reset()
+            reward_sum = 0
+            done = False
             state = state.type(torch.float32).to(self.device).unsqueeze(0).unsqueeze(0)
             rtgs = [ret]
             # first state is from env, first rtg is target return, and first timestep is 0
@@ -244,8 +245,6 @@ class Trainer:
             all_states = state
             actions = []
             while True:
-                if done:
-                    state, reward_sum, done = env.reset(), 0, False
                 action = sampled_action.cpu().numpy()[0,-1]
                 actions += [sampled_action]
                 state, reward, done = env.step(action)

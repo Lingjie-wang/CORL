@@ -34,6 +34,7 @@ MODES="${MODES:-dense}"
 # Seeds aligned with run_atari_dtrd_wlj.sh so DT-baseline and DTRD runs pair up.
 SEEDS="${SEEDS:-10 20 30}"
 EPOCHS="${EPOCHS:-5}"
+MODEL_TYPE="${MODEL_TYPE:-reward_conditioned}"
 NUM_STEPS="${NUM_STEPS:-500000}"
 NUM_BUFFERS="${NUM_BUFFERS:-50}"
 TRAJECTORIES_PER_BUFFER="${TRAJECTORIES_PER_BUFFER:-10}"
@@ -41,9 +42,10 @@ DEVICE="${DEVICE:-cuda}"
 NUM_WORKERS="${NUM_WORKERS:-4}"
 EVAL_EPISODES="${EVAL_EPISODES:-10}"
 EVAL_TARGET_RETURN="${EVAL_TARGET_RETURN:-290}"
-EVAL_RTG_UPDATE="${EVAL_RTG_UPDATE:-clipped_dense}"
+EVAL_RTG_UPDATE="${EVAL_RTG_UPDATE:-}"
 EVAL_EVERY_STEPS="${EVAL_EVERY_STEPS:-}"
 CHECKPOINTS_PATH="${CHECKPOINTS_PATH:-}"
+WANDB_SUFFIX="${WANDB_SUFFIX:-}"
 ATARI_DATA_DIR="${ATARI_DATA_DIR:-$REPO_ROOT/outputs/atari/dqn_replay}"
 DATA_SOURCE="${DATA_SOURCE:-tfds}"
 TFDS_DATA_DIR="${TFDS_DATA_DIR:-$REPO_ROOT/data/atari/tfds_checkpoints_ordered}"
@@ -58,6 +60,20 @@ tfds_dataset_exists() {
   local game="$1"
   local version_dir="$TFDS_DATA_DIR/rlu_atari_checkpoints_ordered/${game}_run_${TFDS_RUN}/1.1.0"
   [ -f "$version_dir/dataset_info.json" ] && find "$version_dir" -name 'rlu_atari_checkpoints_ordered-checkpoint_*.tfrecord-*' -type f -print -quit | grep -q .
+}
+
+atari_rom_exists() {
+  local game="$1"
+  python - "$game" <<'PY'
+import sys
+import atari_py
+
+game = sys.argv[1].lower()
+try:
+    atari_py.get_game_path(game)
+except Exception:
+    sys.exit(1)
+PY
 }
 
 if [ "$DOWNLOAD_DATA" = "1" ] && [ "$DATA_SOURCE" = "dqn_replay" ]; then
@@ -113,6 +129,16 @@ label_for_mode() {
   esac
 }
 
+eval_rtg_update_for_mode() {
+  if [ -n "$EVAL_RTG_UPDATE" ]; then
+    echo "$EVAL_RTG_UPDATE"
+  elif [ "$1" = "sparse" ] || [ "$1" = "delayed" ]; then
+    echo "delayed"
+  else
+    echo "clipped_dense"
+  fi
+}
+
 for game in $GAMES; do
   if [ "$DATA_SOURCE" = "dqn_replay" ] && [ ! -d "$ATARI_DATA_DIR/$game/1/replay_logs" ]; then
     echo "Missing Atari dataset for $game: $ATARI_DATA_DIR/$game/1/replay_logs" >&2
@@ -126,18 +152,25 @@ for game in $GAMES; do
     echo "Unsupported DATA_SOURCE=$DATA_SOURCE. Use dqn_replay or tfds." >&2
     exit 1
   fi
+  if [ "$EVAL_EPISODES" -gt 0 ] && ! atari_rom_exists "$game"; then
+    echo "Missing Atari ROM for $game; online eval would fail after training." >&2
+    echo "Install ROMs first with: CONDA_ENV=$CONDA_ENV scripts/setup_atari_roms_wlj.sh" >&2
+    echo "Or skip online eval with: EVAL_EPISODES=0 ./scripts/run_atari_dt_checkpoints_ordered_wlj.sh" >&2
+    exit 1
+  fi
 
   context_length="$(context_length_for_game "$game")"
   batch_size="$(batch_size_for_game "$game")"
   for mode in $MODES; do
     label="$(label_for_mode "$mode")"
+    eval_rtg_update="$(eval_rtg_update_for_mode "$mode")"
     for seed in $SEEDS; do
       echo "Running Atari DT ${label} on ${game} seed=${seed}"
       args=(
         --seed "$seed"
         --context_length "$context_length"
         --epochs "$EPOCHS"
-        --model_type reward_conditioned
+        --model_type "$MODEL_TYPE"
         --num_steps "$NUM_STEPS"
         --num_buffers "$NUM_BUFFERS"
         --game "$game"
@@ -158,6 +191,9 @@ for game in $GAMES; do
       if [ -n "$CHECKPOINTS_PATH" ]; then
         args+=(--checkpoints_path "$CHECKPOINTS_PATH")
       fi
+      if [ -n "$WANDB_SUFFIX" ]; then
+        args+=(--wandb_suffix "$WANDB_SUFFIX")
+      fi
       if [ -n "$EVAL_EVERY_STEPS" ]; then
         args+=(--eval_every_steps "$EVAL_EVERY_STEPS")
       fi
@@ -167,8 +203,8 @@ for game in $GAMES; do
       if [ -n "$TFDS_SAMPLING_SEED" ]; then
         args+=(--tfds_sampling_seed "$TFDS_SAMPLING_SEED")
       fi
-      if [ -n "$EVAL_RTG_UPDATE" ]; then
-        args+=(--eval_rtg_update "$EVAL_RTG_UPDATE")
+      if [ -n "$eval_rtg_update" ]; then
+        args+=(--eval_rtg_update "$eval_rtg_update")
       fi
       if [ "$DATA_SOURCE" = "tfds" ] && { [ "$DOWNLOAD_DATA" != "1" ] || tfds_dataset_exists "$game"; }; then
         args+=(--no-tfds_download)
