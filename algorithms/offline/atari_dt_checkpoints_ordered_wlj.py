@@ -9,7 +9,9 @@ import torch
 import wandb
 from torch.utils.data import Dataset
 
+from algorithms.offline.atari_wlj.hdf5_atari_dataset import HDF5_SAMPLING_MODES
 from algorithms.offline.atari_wlj.model_atari import GPT, GPTConfig
+from algorithms.offline.atari_wlj.minari_dataset import MINARI_SAMPLING_MODES
 from algorithms.offline.atari_wlj.tfds_checkpoints_ordered_dataset import (
     SAMPLING_MODES,
     create_tfds_checkpoints_ordered_dataset as create_tfds_dataset,
@@ -95,7 +97,11 @@ def parse_args():
     parser.add_argument("--batch_size", type=int, default=128)
     parser.add_argument("--trajectories_per_buffer", type=int, default=10)
     parser.add_argument("--data_dir_prefix", type=str, default="./outputs/atari/dqn_replay")
-    parser.add_argument("--data_source", choices=("dqn_replay", "tfds"), default="tfds")
+    parser.add_argument(
+        "--data_source",
+        choices=("dqn_replay", "tfds", "minari", "hdf5"),
+        default="tfds",
+    )
     parser.add_argument("--reward_mode", choices=("dense", "delayed", "sparse"), default="dense")
     parser.add_argument("--tfds_data_dir", type=str, default="./data/atari/tfds_checkpoints_ordered")
     parser.add_argument("--tfds_run", type=int, default=1)
@@ -104,6 +110,18 @@ def parse_args():
     parser.add_argument("--tfds_sampling_seed", type=int, default=None)
     parser.add_argument("--tfds_raw_input_prefix", type=str, default=None)
     parser.add_argument("--tfds_download", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--minari_dataset_id", type=str, default=None)
+    parser.add_argument("--minari_data_dir", type=str, default="./data/minari")
+    parser.add_argument("--minari_download", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--minari_num_shards", type=int, default=50)
+    parser.add_argument("--minari_dataset_prefix", type=str, default=None)
+    parser.add_argument("--minari_sampling_mode", choices=MINARI_SAMPLING_MODES, default="balanced")
+    parser.add_argument("--minari_sampling_seed", type=int, default=None)
+    parser.add_argument("--hdf5_data_dir", type=str, default="./data/atari/dqn_replay_hdf5")
+    parser.add_argument("--hdf5_shard_paths", type=str, default=None)
+    parser.add_argument("--hdf5_num_shards", type=int, default=50)
+    parser.add_argument("--hdf5_sampling_mode", choices=HDF5_SAMPLING_MODES, default="balanced")
+    parser.add_argument("--hdf5_sampling_seed", type=int, default=None)
     parser.add_argument("--learning_rate", type=float, default=6e-4)
     parser.add_argument("--num_workers", type=int, default=4)
     parser.add_argument("--device", type=str, default="cuda")
@@ -147,6 +165,10 @@ def main():
         )
     if args.tfds_sampling_seed is None:
         args.tfds_sampling_seed = args.seed
+    if args.minari_sampling_seed is None:
+        args.minari_sampling_seed = args.seed
+    if args.hdf5_sampling_seed is None:
+        args.hdf5_sampling_seed = args.seed
 
     # init wandb session for logging. group by game+reward_mode so that the
     # dense/delayed x multi-seed runs are aggregated together, and give each
@@ -182,6 +204,44 @@ def main():
             sampling_mode=args.tfds_sampling_mode,
             sampling_seed=args.tfds_sampling_seed,
             trajectories_per_buffer=args.trajectories_per_buffer,
+        )
+    elif args.data_source == "minari":
+        from algorithms.offline.atari_wlj.minari_dataset import create_minari_dataset
+
+        if args.minari_dataset_id:
+            minari_dataset_id = args.minari_dataset_id
+        else:
+            minari_prefix = (
+                args.minari_dataset_prefix
+                or f"corl/{args.game.lower()}-dqn-epoch"
+            )
+            minari_dataset_id = ",".join(
+                f"{minari_prefix}-{shard_idx:02d}-v0"
+                for shard_idx in range(1, args.minari_num_shards + 1)
+            )
+        obss, actions, returns, done_idxs, rtgs, timesteps = create_minari_dataset(
+            args.num_steps,
+            minari_dataset_id,
+            data_dir=args.minari_data_dir,
+            reward_mode=args.reward_mode,
+            download=args.minari_download,
+            sampling_mode=args.minari_sampling_mode,
+            sampling_seed=args.minari_sampling_seed,
+        )
+    elif args.data_source == "hdf5":
+        from algorithms.offline.atari_wlj.hdf5_atari_dataset import (
+            create_hdf5_atari_dataset,
+        )
+
+        obss, actions, returns, done_idxs, rtgs, timesteps = create_hdf5_atari_dataset(
+            args.num_steps,
+            args.game,
+            args.hdf5_data_dir,
+            reward_mode=args.reward_mode,
+            shard_paths=args.hdf5_shard_paths,
+            num_shards=args.hdf5_num_shards,
+            sampling_mode=args.hdf5_sampling_mode,
+            sampling_seed=args.hdf5_sampling_seed,
         )
     else:
         from algorithms.offline.atari_wlj.create_dataset import create_dataset

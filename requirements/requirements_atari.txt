@@ -22,3 +22,15 @@ atari-py
 #   python -m atari_py.import_roms "$(python -c 'import AutoROM, os; print(os.path.join(os.path.dirname(AutoROM.__file__), "roms"))')"
 # Or just run scripts/setup_atari_roms_wlj.sh, which does all of the above.
 autorom[accept-rom-license]
+
+# Lossless raw uint8 HDF5 path for collecting/loading DQN replay-style Atari
+# shards. Gymnasium/ALE supplies the Atari environment.
+h5py>=3.8.0
+gymnasium==1.3.0
+ale-py==0.12.0
+
+# Optional legacy Minari path. Do not use it for final Atari pixel DT data in
+# this repo because Minari's HDF5 image storage encodes image observations as
+# JPEG bytes.
+minari[hdf5,hf]==0.5.3
+socksio==1.0.0

@@ -54,6 +54,18 @@ TFDS_CHECKPOINT_SPLITS="${TFDS_CHECKPOINT_SPLITS:-all}"
 TFDS_SAMPLING_MODE="${TFDS_SAMPLING_MODE:-balanced}"
 TFDS_SAMPLING_SEED="${TFDS_SAMPLING_SEED:-}"
 TFDS_RAW_INPUT_PREFIX="${TFDS_RAW_INPUT_PREFIX:-$REPO_ROOT/outputs/atari/rl_unplugged_raw/atari_episodes_ordered}"
+MINARI_DATA_DIR="${MINARI_DATA_DIR:-$REPO_ROOT/data/minari}"
+MINARI_DATASET_ID="${MINARI_DATASET_ID:-}"
+MINARI_DOWNLOAD="${MINARI_DOWNLOAD:-0}"
+MINARI_NUM_SHARDS="${MINARI_NUM_SHARDS:-50}"
+MINARI_DATASET_PREFIX="${MINARI_DATASET_PREFIX:-}"
+MINARI_SAMPLING_MODE="${MINARI_SAMPLING_MODE:-balanced}"
+MINARI_SAMPLING_SEED="${MINARI_SAMPLING_SEED:-}"
+HDF5_DATA_DIR="${HDF5_DATA_DIR:-$REPO_ROOT/data/atari/dqn_replay_hdf5}"
+HDF5_SHARD_PATHS="${HDF5_SHARD_PATHS:-}"
+HDF5_NUM_SHARDS="${HDF5_NUM_SHARDS:-50}"
+HDF5_SAMPLING_MODE="${HDF5_SAMPLING_MODE:-balanced}"
+HDF5_SAMPLING_SEED="${HDF5_SAMPLING_SEED:-}"
 DOWNLOAD_DATA="${DOWNLOAD_DATA:-0}"
 
 tfds_dataset_exists() {
@@ -148,8 +160,17 @@ for game in $GAMES; do
     echo "Missing TFDS Atari dataset for $game: $TFDS_DATA_DIR/rlu_atari_checkpoints_ordered/${game}_run_${TFDS_RUN}/1.1.0" >&2
     echo "Run scripts/download_atari_tfds_checkpoints_ordered_wlj.sh or set DOWNLOAD_DATA=1." >&2
     exit 1
-  elif [ "$DATA_SOURCE" != "dqn_replay" ] && [ "$DATA_SOURCE" != "tfds" ]; then
-    echo "Unsupported DATA_SOURCE=$DATA_SOURCE. Use dqn_replay or tfds." >&2
+  elif [ "$DATA_SOURCE" = "hdf5" ] && [ -z "$HDF5_SHARD_PATHS" ]; then
+    for shard_idx in $(seq 1 "$HDF5_NUM_SHARDS"); do
+      shard_name="$(printf '%02d' "$shard_idx")"
+      if [ ! -f "$HDF5_DATA_DIR/$game/epoch_${shard_name}.hdf5" ]; then
+        echo "Missing raw HDF5 Atari shard: $HDF5_DATA_DIR/$game/epoch_${shard_name}.hdf5" >&2
+        echo "Run scripts/collect_atari_dqn_replay_hdf5_wlj.sh first." >&2
+        exit 1
+      fi
+    done
+  elif [ "$DATA_SOURCE" != "dqn_replay" ] && [ "$DATA_SOURCE" != "tfds" ] && [ "$DATA_SOURCE" != "minari" ] && [ "$DATA_SOURCE" != "hdf5" ]; then
+    echo "Unsupported DATA_SOURCE=$DATA_SOURCE. Use dqn_replay, tfds, minari, or hdf5." >&2
     exit 1
   fi
   if [ "$EVAL_EPISODES" -gt 0 ] && ! atari_rom_exists "$game"; then
@@ -184,10 +205,36 @@ for game in $GAMES; do
         --tfds_checkpoint_splits "$TFDS_CHECKPOINT_SPLITS"
         --tfds_sampling_mode "$TFDS_SAMPLING_MODE"
         --tfds_raw_input_prefix "$TFDS_RAW_INPUT_PREFIX"
+        --minari_data_dir "$MINARI_DATA_DIR"
+        --minari_num_shards "$MINARI_NUM_SHARDS"
+        --minari_sampling_mode "$MINARI_SAMPLING_MODE"
+        --hdf5_data_dir "$HDF5_DATA_DIR"
+        --hdf5_num_shards "$HDF5_NUM_SHARDS"
+        --hdf5_sampling_mode "$HDF5_SAMPLING_MODE"
         --num_workers "$NUM_WORKERS"
         --device "$DEVICE"
         --eval_episodes "$EVAL_EPISODES"
       )
+      if [ -n "$MINARI_DATASET_ID" ]; then
+        args+=(--minari_dataset_id "$MINARI_DATASET_ID")
+      fi
+      if [ -n "$MINARI_DATASET_PREFIX" ]; then
+        args+=(--minari_dataset_prefix "$MINARI_DATASET_PREFIX")
+      fi
+      if [ -n "$MINARI_SAMPLING_SEED" ]; then
+        args+=(--minari_sampling_seed "$MINARI_SAMPLING_SEED")
+      fi
+      if [ -n "$HDF5_SHARD_PATHS" ]; then
+        args+=(--hdf5_shard_paths "$HDF5_SHARD_PATHS")
+      fi
+      if [ -n "$HDF5_SAMPLING_SEED" ]; then
+        args+=(--hdf5_sampling_seed "$HDF5_SAMPLING_SEED")
+      fi
+      if [ "$MINARI_DOWNLOAD" = "1" ]; then
+        args+=(--minari_download)
+      else
+        args+=(--no-minari_download)
+      fi
       if [ -n "$CHECKPOINTS_PATH" ]; then
         args+=(--checkpoints_path "$CHECKPOINTS_PATH")
       fi

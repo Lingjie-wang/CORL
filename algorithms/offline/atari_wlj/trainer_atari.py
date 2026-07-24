@@ -82,7 +82,7 @@ class Trainer:
     def evaluate(self, epoch, best_return):
         if self.config.model_type == 'naive':
             target_return = 0
-            eval_return = self.get_returns(0)
+            eval_stats = self.get_returns(0)
         elif self.config.model_type == 'reward_conditioned':
             if self.config.eval_target_return is not None:
                 target_return = self.config.eval_target_return
@@ -96,14 +96,17 @@ class Trainer:
                 target_return = 20
             else:
                 raise NotImplementedError()
-            eval_return = self.get_returns(target_return)
+            eval_stats = self.get_returns(target_return)
         else:
             raise NotImplementedError()
 
+        eval_return = eval_stats["return_raw"]
         best_return = max(best_return, eval_return)
         wandb.log(
             {
                 "eval/return": eval_return,
+                "eval/return_raw": eval_stats["return_raw"],
+                "eval/clipped_return": eval_stats["return_clipped"],
                 "eval/best_return": best_return,
                 "eval/target_return": target_return,
                 "epoch": epoch,
@@ -228,10 +231,12 @@ class Trainer:
         env = Env(args)
         env.eval()
 
-        T_rewards = []
+        T_rewards_raw = []
+        T_rewards_clipped = []
         for i in range(self.config.eval_episodes):
             state = env.reset()
             reward_sum = 0
+            clipped_reward_sum = 0
             done = False
             state = state.type(torch.float32).to(self.device).unsqueeze(0).unsqueeze(0)
             rtgs = [ret]
@@ -249,10 +254,12 @@ class Trainer:
                 actions += [sampled_action]
                 state, reward, done = env.step(action)
                 reward_sum += reward
+                clipped_reward_sum += float(np.clip(reward, -1.0, 1.0))
                 j += 1
 
                 if done:
-                    T_rewards.append(reward_sum)
+                    T_rewards_raw.append(reward_sum)
+                    T_rewards_clipped.append(clipped_reward_sum)
                     break
 
                 state = state.unsqueeze(0).unsqueeze(0).to(self.device)
@@ -276,10 +283,17 @@ class Trainer:
                     rtgs=torch.tensor(rtgs, dtype=torch.long).to(self.device).unsqueeze(0).unsqueeze(-1), 
                     timesteps=(min(j, self.config.max_timestep) * torch.ones((1, 1, 1), dtype=torch.int64).to(self.device)))
         env.close()
-        eval_return = sum(T_rewards) / float(self.config.eval_episodes)
-        print("target return: %d, eval return: %d" % (ret, eval_return))
+        eval_return_raw = sum(T_rewards_raw) / float(self.config.eval_episodes)
+        eval_return_clipped = sum(T_rewards_clipped) / float(self.config.eval_episodes)
+        print(
+            "target return: %d, eval return raw: %d, clipped: %d"
+            % (ret, eval_return_raw, eval_return_clipped)
+        )
         self.model.train(True)
-        return eval_return
+        return {
+            "return_raw": eval_return_raw,
+            "return_clipped": eval_return_clipped,
+        }
 
 
 class Env():
